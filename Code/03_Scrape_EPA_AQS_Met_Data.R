@@ -1,7 +1,9 @@
 #' -----------------------------------------------------------------------------
+#' Project: ECHO Aim 1 ST Prediction Model for Black Carbon
+#' Task: Scrape the EPA AQS air quality and meteorology data
 #' Date created: October 25, 2018
 #' Author: Sheena Martenies
-#' Contact: Sheena.Martenies@colostate.edu
+#' Contact: smarte4@illinois.edu
 #' 
 #' NOTE: Due to some issues with the API, going to just download the summary
 #' files from the EPA website and subset to the locations we need in the 
@@ -74,12 +76,7 @@ for (i in 1:length(years)) {
 #' from CDPHE website, since AQS data is delayed by at least a quarter
 #' -----------------------------------------------------------------------------
 
-#' -----------------------------------------------------------------------------
-#' Most recent air pollution, temp, RH, and wind data
-#' from CDPHE website, since AQS data is delayed by at least a quarter
-#' -----------------------------------------------------------------------------
-
-start_date <- as.Date("2020-05-01")
+start_date <- as.Date("2020-01-01")
 end_date <- Sys.Date()
 dates <- seq(start_date, end_date, by="1 day")
 dates <- format(dates, "%m%d%Y")

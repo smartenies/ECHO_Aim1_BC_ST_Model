@@ -3,7 +3,6 @@
 #' Task: Create a 250 m grid to cover the study domain
 #' Author: Sheena Martenies
 #' Date Created: October 16, 2018
-#' 
 #' Contact: smarte4@illinois.edu
 #' -----------------------------------------------------------------------------
 

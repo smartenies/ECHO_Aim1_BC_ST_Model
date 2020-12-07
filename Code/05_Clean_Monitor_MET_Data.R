@@ -14,14 +14,14 @@ library(sf)
 ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
 albers <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
 
-aqs_path <- "R:/RSTOR-Magzamen/Research/Secondary_Data/EPA_Air_Quality_System_Data/"
+aqs_path <- here::here("Secondary_Data", "EPA_Air_Quality_System_Data")
 
 #' -----------------------------------------------------------------------------
 #' Read in the MET datasets and simplify 
 #' -----------------------------------------------------------------------------
 
-met_vars <- c("TEMP")
-# met_vars <- c("PRESS", "RH_DP", "TEMP", "WIND")
+#met_vars <- c("TEMP")
+met_vars <- c("PRESS", "RH_DP", "TEMP", "WIND")
 
 for (met in 1:length(met_vars)) {
   print(paste(met, "of", length(met_vars), "variables"))

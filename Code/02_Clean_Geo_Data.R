@@ -1,18 +1,14 @@
 #' -----------------------------------------------------------------------------
-#' Project: ECHO Aim 1 Land Use Regression
-#' 
+#' Project: ECHO Aim 1 ST Prediction Model for Black Carbon
 #' Task: Clean and format the spatial data used in the LUR, including land use
 #' characteristics, elevation, and spatial features
-#' 
-#' Also includes code to get the "places" spatial data from Google (e.g., 
-#' restuarants for the ROS LUR)
-#' 
 #' Author: Sheena Martenies
-#' 
 #' Date Created: October 16, 2018
-#' 
-#' Contact: sheena.martenies@colostate.edu
+#' Contact: smarte4@illinois.edu
 #' -----------------------------------------------------------------------------
+
+#' NOTE: this script cannot currently be run on the UIUC computer-- data needs
+#' to be copied over from RSTOR
 
 #' Load required libraries
 library(sf)

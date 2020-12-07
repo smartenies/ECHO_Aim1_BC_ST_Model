@@ -1,9 +1,9 @@
 #' -----------------------------------------------------------------------------
+#' Project: ECHO Aim 1 ST Prediction Model for Black Carbon
+#' Task: Download NOAA Hazard Mapping System shapefiles for smoke plumes 
 #' Date created: September 11, 2020
 #' Author: Sheena Martenies
 #' Contact: smarte4@illinois.edu
-#' 
-#' Description: Download NOAA Hazard Mapping System shapefiles for smoke plumes 
 #' 
 #' The Hazard Mapping System (from NOAA) makes publicly available all of the
 #' shapefiles they generate each day at this website: 
@@ -46,7 +46,7 @@ if(!dir.exists(here::here("Secondary_Data/HMS_Smoke"))) dir.create(here::here("S
 #' Note that "today's" data might not be "finalized", so the date sequence is 
 #' all dates between the start date and "yesterday"
 
-start_date <- as.Date("2010-01-01")
+start_date <- as.Date("2009-01-01")
 end_date <- Sys.Date() - 1
 dates <- seq(start_date, end_date, by="1 day")
 dates <- format(dates, "%m%d%Y")
