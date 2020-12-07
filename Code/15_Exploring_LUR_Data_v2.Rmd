@@ -1,0 +1,762 @@
+---
+title: "Exploring_LUR_Data"
+author: "Sheena Martenies"
+date: "2/26/2020"
+output: html_document
+---
+
+## Objectives
+The purpose of this script is to explore the LUR dataset and determine how we want to proceed with model development. 
+
+**Note:** meeting notes are summarized at the end of this document
+
+## Modeling team
+The current research team consists of me as the analyst, Sheryl Magzamen, Ben Allshouse (UC AMC), and Zev Ross (statistical consultant).
+
+## Goal
+Our goal for these data is to fit a spatially- and temporally- resolved land use regression model for Denver, CO that can be used to back-extrapolate black carbon concentrations for the 2009-2014 period (initially)
+
+## Challenges
+
+1. The monitoring data cover (almost) a single year (spring/summer 2018 through winter 2019), but we need to be able to back-extrapolate the data 
+2. We have repeated measures at the distributed sites, and there are an unbalanced number of measurements at these sites
+3. Spatial patterns in BC might vary in time
+
+## Current thoughts
+Current thoughts for how to proceed (from our stats consultant Zev Ross):
+
+- Since the monitoring for this project only monitors in one year the challenge is in how to use the spatial and/or temporal information from the distributed (filter) sites for this one year and use this to predict in years that the distributed monitoring was not done.
+- To use the temporal variation from the distributed sites to predict past concentrations, we’d need to, as an example, include weekly or monthly values in the model as either categorical or continuous variables. Then we’d compute parameters or smooth curves for this temporal piece. The problem with this is that we’d need to assume that weekly or monthly trends would be the same or at least very similar for all years. For example, if we determined that January values were 0.73 relative to the average then we’d need to assume that January values in another year were also 0.73 of the average for that year. There is so much temporal variation, though, I think this is probably a big reach. This would also, probably, assume that the spatial relative spatial pattern stayed relatively static.
+- Alternatively we could compute a single spatial surface, assume this is stable through time and then move this surface up and down based on central site ratios. This requires determining what the “stable” spatial surface might be and whether keeping it constant through time is realistic.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, include = F)
+
+#' Description:
+#' This script is used for preliminary data exploration of the LUR dataset
+
+library(sf)
+library(gstat)
+library(sp)
+library(raster)
+library(ggplot2)
+library(ggmap)
+library(ggsn)
+library(ggthemes)
+library(extrafont)
+library(GGally)
+library(ggcorrplot)
+library(stringr)
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(viridis)
+library(caret)
+library(knitr)
+library(kableExtra)
+
+#' For ggplots
+# loadfonts(device = "win")
+
+simple_theme <- theme(
+  #aspect.ratio = 1,
+  text  = element_text(family="Calibri",size = 12, color = 'black'),
+  panel.spacing.y = unit(0,"cm"),
+  panel.spacing.x = unit(0.25, "lines"),
+  panel.grid.minor = element_line(color = "grey90"),
+  panel.grid.major = element_line(color = "grey90"),
+  panel.border=element_rect(fill = NA),
+  panel.background=element_blank(),
+  axis.ticks = element_line(colour = "black"),
+  axis.text = element_text(color = "black", size=10),
+  # legend.position = c(0.1,0.1),
+  plot.margin=grid::unit(c(0,0,0,0), "mm"),
+  legend.key = element_blank()
+)
+
+options(scipen = 9999) #avoid scientific notation
+
+albers <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
+ll_nad83 <- "+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0"
+ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+```
+
+```{r, include = F}
+#' Read in the dataset and subset to just the outdoor filters
+#' Don't worry about the "central site" filters right now
+#' Define which variable we want to use-- BC calibrated using Deming regression
+
+data_name <- "Combined_Filter_Data_AEA.csv"
+lur_data <- read_csv(here::here("Data", data_name)) %>% 
+  filter(!is.na(lon)) %>% 
+  filter(indoor == 0) %>% 
+  filter(bc_ug_m3_dem > 0) %>% 
+  mutate(LoggedRuntime = as.numeric(LoggedRuntime)) %>% 
+  mutate(StartDateLocal = as.Date(StartDateLocal, format = "%m/%d/%Y"),
+         EndDateLocal = as.Date(EndDateLocal, format = "%m/%d/%Y")) 
+
+aqs_data <- filter(lur_data, filter_id == "080310027")
+
+lur_data <- lur_data %>% filter(filter_id != "080310027")
+
+#' Select a "calibrated" version of the data
+#' For now, go with Deming regression-- accounts for variability in the
+#' monitor and the UPAS data
+lur_data <- lur_data %>% 
+  rename("pm_ug_m3_raw" = "pm_ug_m3") %>% 
+  rename("pm_ug_m3" = "pm_ug_m3_dem") %>% 
+  rename("bc_ug_m3_raw" = "bc_ug_m3") %>% 
+  rename("bc_ug_m3" = "bc_ug_m3_dem")
+
+#' Add a unique site ID
+lur_data <- mutate(lur_data, site_id_lonlat = paste(lon, lat, sep = "_"))
+
+ids <- select(lur_data, site_id_lonlat) %>% 
+  distinct() %>% 
+  mutate(site_id = seq_along(site_id_lonlat))
+write_csv(ids, here::here("Data", "Monitor_Site_IDs.csv"))
+
+lur_data <- left_join(lur_data, ids, by = "site_id_lonlat") %>% 
+  arrange(StartDateLocal, site_id)
+
+#' How much data do we have?
+nrow_lur <- nrow(lur_data)
+n_campaigns <- length(unique(lur_data$campaign))
+n_sites <- length(unique(lur_data$site_id))
+
+dates <- lur_data %>% 
+  select(StartDateLocal, EndDateLocal) %>% 
+  arrange(StartDateLocal)
+earliest <- dates$StartDateLocal[1]
+latest <- dates$EndDateLocal[nrow(dates)]
+date_seq <- seq.Date(earliest, latest, by = "day")
+
+date_df <- lur_data %>% 
+  select(campaign, StartDateLocal, EndDateLocal) %>% 
+  arrange(StartDateLocal) %>% 
+  group_by(campaign) %>% 
+  summarize(Start_Date = StartDateLocal[1],
+            End_Date = EndDateLocal[length(EndDateLocal)])
+
+#' When were samples collected?
+site_tab2 <- lur_data %>% 
+  select(site_id, campaign) %>% 
+  group_by(site_id) %>% 
+  count(campaign) %>% 
+  pivot_wider(id_cols = site_id, names_from = campaign, values_from = n) %>% 
+  mutate(total = sum(Campaign1, Campaign2, Campaign3, Campaign4, na.rm = T))
+
+#' How many unique sites were included in each campaign?
+camp_tab <- select(lur_data, campaign, site_id) %>% 
+  group_by(campaign) %>% 
+  summarize(unique_sites = length(unique(site_id)))
+
+```
+
+```{r, include = F, echo = F}
+counties <- c("001", "005", "013", "014", "031", "059")
+
+#' PM2.5 concentrations
+pm_data <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv")) %>% 
+  filter(!is.na(Arithmetic_Mean)) %>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(week = isoweek(Date_Local),
+         month = month(Date_Local),
+         year = year(Date_Local)) %>% 
+  mutate(month_yr = paste(month, year, sep="_"),
+         start_iso_week = isoweek(as.Date(Date_Local))) %>%
+  filter(Sample_Duration != "1 HOUR") %>% 
+  filter(County_Code %in% counties) %>% 
+  filter(Date_Local %in% date_seq)
+
+#' Black carbon
+bc_data <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv")) %>% 
+  filter(!is.na(Arithmetic_Mean)) %>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(week = isoweek(Date_Local),
+         month = month(Date_Local),
+         year = year(Date_Local)) %>% 
+  mutate(month_yr = paste(month, year, sep="_"),
+         start_iso_week = isoweek(as.Date(Date_Local))) %>%
+  filter(County_Code %in% counties) %>% 
+  filter(Date_Local %in% date_seq)
+
+#' NO2
+no2_data <- read_csv(here::here("Data", "Monitor_NO2_Data_AEA.csv")) %>% 
+  filter(!is.na(Arithmetic_Mean)) %>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(week = isoweek(Date_Local),
+         month = month(Date_Local),
+         year = year(Date_Local)) %>% 
+  mutate(month_yr = paste(month, year, sep="_"),
+         start_iso_week = isoweek(as.Date(Date_Local))) %>%
+  filter(County_Code %in% counties) %>% 
+  filter(Date_Local %in% date_seq)
+
+#' Temperature
+temp_data <- read_csv(here::here("Data", "Monitor_TEMP_Data_AEA.csv")) %>% 
+  filter(!is.na(Arithmetic_Mean)) %>% 
+  st_as_sf(wkt = "WKT", crs = albers)%>% 
+  mutate(week = isoweek(Date_Local),
+         month = month(Date_Local),
+         year = year(Date_Local)) %>% 
+  mutate(month_yr = paste(month, year, sep="_"),
+         start_iso_week = isoweek(as.Date(Date_Local))) %>%
+  filter(County_Code %in% counties) %>% 
+  filter(Date_Local %in% date_seq)
+```
+
+### A) Understanding the sampling framework
+
+In total, we have `r nrow_lur` filters collected across `r n_campaigns` sampling campaigns. We collected data at `r n_sites` distributed sites and `r nrow(aqs_data)` EPA monitoring sites. Due to a variety of logtistical challenges, not all sites were available for all campaigns. The number of distributed site sampling locations for Campaigns 1, 2, 3, and 4 were `r camp_tab$unique_sites[1]`, `r camp_tab$unique_sites[2]`, `r camp_tab$unique_sites[3]`, and `r camp_tab$unique_sites[4]`, respectively.
+
+Out goal was to obtain at least 6 weekly integrated samples at each location. The number of samples collected at each distriubted monitoring site varied from `r min(site_tab2$total)` to `r max(site_tab2$total)`. 
+
+The campaigns roughly covered the early and late summer, fall, and winter seasons. We are lacking coverage during the spring season. Due to some interesting relationships between our co-located distributed site monitor data and the central BC monitor data during the winter, we are conducting a follow-up winter/spring campaign right now.
+
+```{r echo = F, include = T}
+kable(date_df) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))%>%
+  kable_styling(fixed_thead = T)
+```
+
+On average, weekly sampling periods lasted `r round(mean(lur_data$LoggedRuntime, na.rm=T)/24,2)` days and ranged from `r round((min(lur_data$LoggedRuntime, na.rm = T)/24), 2)` to `r round(max(lur_data$LoggedRuntime)/24,2)`. 90% of samples collected has runtimes exceeding `r round(quantile(lur_data$LoggedRuntime, probs = 0.10, na.rm = T)/24,2)` days.
+
+```{r, include = T, echo = F}
+ggplot(lur_data) +
+  geom_histogram(aes(x = LoggedRuntime/24)) +
+  xlab("Sample runtime (days)") +
+  simple_theme
+```
+
+We also have daily PM~2.5~ data from `r length(unique(pm_data$monitor_id))` central site monitors, temperature data from `r length(unique(temp_data$monitor_id))`, and NO~2~ data from `r length(unique(no2_data$monitor_id))` central site monitors in the 6-county Denver metro area.
+
+1. Table summarizing the number of weekly-integrated filter samples collected at each sampling location for each campaign
+
+```{r echo = F, include = T}
+kable(site_tab2) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))%>%
+  kable_styling(fixed_thead = T)
+```
+
+2. Plot of when distributed site monitors were deployed
+
+```{r echo = F, include = T}
+ggplot(lur_data) +
+  geom_segment(aes(x = StartDateLocal, xend = EndDateLocal, 
+                   y = site_id, yend = site_id,
+                   col = as.factor(campaign))) +
+  scale_color_viridis(discrete = T, name = "Campaign") +
+  scale_x_date(date_breaks = "2 months") +
+  xlab("Sampling duration") + ylab("Distributed site ID") +
+  simple_theme
+
+```
+
+3. Our sampling locations cover the entire Denver metro area within the 470 loop.
+
+``` {r}
+data_name <- "Combined_Filter_Data_AEA.csv"
+lur_data_sf <- read_csv(here::here("Data", data_name)) %>%
+  filter(!is.na(lon)) %>%
+  mutate(site_id_lonlat = paste(lon, lat, sep = "_")) %>%
+  left_join(ids, by = "site_id_lonlat") %>%
+  st_as_sf(coords = c('lon', 'lat'), crs = ll_wgs84) %>%
+  st_transform(crs = albers) %>%
+  filter(indoor == 0) %>%
+  filter(bc_ug_m3_dem > 0) %>%
+  rename("pm_ug_m3_raw" = "pm_ug_m3") %>%
+  rename("pm_ug_m3" = "pm_ug_m3_dem") %>%
+  rename("bc_ug_m3_raw" = "bc_ug_m3") %>%
+  rename("bc_ug_m3" = "bc_ug_m3_dem")
+
+highways <- read_csv(here::here("Data", "Highways_AEA.csv")) %>%
+  st_as_sf(wkt = "WKT", crs = albers)
+
+```
+
+``` {r site_map, include = T}
+ggplot() +
+  geom_sf(data = lur_data_sf, aes(color = "pt"), show.legend = "point") +
+  geom_sf(data = highways, aes(color = "high"), show.legend = "line") +
+  scale_color_manual(name = "Feature",
+                     values = c("high" = "red", "pt" = "black"),
+                     labels = c("high" = "Highways", "pt" = "Sites")) +
+  simple_theme
+```
+
+### B) Temporal trends in the data
+
+Some observations of the data:
+
+- There is a large amount of variability in BC concentrations measured in the winter campaign (Campaign4)
+- Concentrations measured at the distributed sites seem to be increasing over time, with a (possible?) downturn at the end of Campaign 4
+- This trend isn't reflected in the central site data
+- There is an increase in central site BC between 
+
+```{r, echo = F, include = F}
+#' Weekly data for each distributed sampling location
+week_data <- select(lur_data, StartDateLocal, EndDateLocal, site_id, bc_ug_m3,
+                    area_pm, area_no2, area_temp, nn_bc) %>%
+  filter(!is.na(StartDateLocal)) %>%
+  filter(!is.na(bc_ug_m3)) %>% 
+  mutate(plot_date = StartDateLocal + floor((EndDateLocal - StartDateLocal)/2))
+
+week_data$central_bc_check <- NA
+week_data$central_pm_check <- NA
+week_data$central_temp_check <- NA
+week_data$central_no2_check <- NA
+
+#' Calculate average BC, PM2.5, NO2, and temp across all Denver metro monitors
+for(i in 1:nrow(week_data)) {
+  df <- slice(week_data, i)
+  date_list <- seq.Date(df$StartDateLocal, df$EndDateLocal, by = "day")
+  
+  bc_temp <- filter(bc_data, Date_Local %in% date_list)
+  week_data$central_bc_check[i] <- mean(bc_temp$Arithmetic_Mean)
+  
+  pm_temp <- filter(pm_data, Date_Local %in% date_list)
+  week_data$central_pm_check[i] <- mean(pm_temp$Arithmetic_Mean)
+  
+  no2_temp <- filter(no2_data, Date_Local %in% date_list)
+  week_data$central_no2_check[i] <- mean(no2_temp$Arithmetic_Mean)
+  
+  temp_temp <- filter(temp_data, Date_Local %in% date_list)
+  week_data$central_temp_check[i] <- mean(temp_temp$Arithmetic_Mean)
+}
+
+
+cor(week_data$nn_bc, week_data$central_bc_check, use = "complete.obs")
+cor(week_data$area_pm, week_data$central_pm_check, use = "complete.obs")
+cor(week_data$area_temp, week_data$central_temp_check, use = "complete.obs")
+cor(week_data$area_no2, week_data$central_no2_check, use = "complete.obs")
+
+#' Weekly data across all distributed sampling location
+week_mean_data <- select(week_data, StartDateLocal, EndDateLocal, site_id, bc_ug_m3,
+                         central_pm_check, central_no2_check,
+                         central_temp_check, central_bc_check) %>%
+  filter(!is.na(StartDateLocal)) %>%
+  filter(!is.na(bc_ug_m3))  %>%
+  group_by(StartDateLocal, EndDateLocal) %>%
+  summarize(bc_ug_m3 = mean(bc_ug_m3, na.rm = T),
+            central_pm_check = mean(central_pm_check, na.rm=T),
+            central_no2_check = mean(central_no2_check, na.rm=T),
+            central_temp_check = mean(central_temp_check, na.rm=T),
+            central_bc_check = mean(central_bc_check, na.rm=T)) %>% 
+  mutate(plot_date = StartDateLocal + floor((EndDateLocal - StartDateLocal)/2))
+
+#' Study-wide data for each distributed sampling location
+site_mean_data <- select(week_data, StartDateLocal, EndDateLocal, site_id, bc_ug_m3,
+                         central_pm_check, central_no2_check,
+                         central_temp_check, central_bc_check) %>%
+  filter(!is.na(StartDateLocal)) %>%
+  filter(!is.na(bc_ug_m3))  %>%
+  group_by(site_id) %>%
+  summarize(bc_ug_m3 = mean(bc_ug_m3, na.rm = T),
+            central_pm_check = mean(central_pm_check, na.rm=T),
+            central_no2_check = mean(central_no2_check, na.rm=T),
+            central_temp_check = mean(central_temp_check, na.rm=T),
+            central_bc_check = mean(central_bc_check, na.rm=T))
+```
+
+1) Time-weighted average BC concentrations at each distributed sampling site
+```{r, include = T, echo = F, warning=F}
+ggplot() +
+  geom_point(data = week_data, aes(x = plot_date, y = bc_ug_m3),
+             alpha = 0.25) +
+  geom_smooth(data = week_data, aes(x = plot_date, y = bc_ug_m3)) +
+  ylab("Distributed site BC for individual filters") + xlab("Sampling date") +
+  simple_theme
+```
+
+2) "Weekly" mean BC across all sampling sites (averaged based on the start and end dates of each sampling period)
+```{r, include = T}
+ggplot() +
+  geom_point(data = week_mean_data, aes(x = plot_date, y = bc_ug_m3),
+             size = 1) +
+  geom_smooth(data = week_mean_data, aes(x = plot_date, y = bc_ug_m3)) +
+  ylab("Weekly average distributed Site BC") + xlab("Sampling date") +
+  simple_theme
+
+```
+
+3) Distribution of BC by sampling campaign and week
+
+```{r include = T, echo = F}
+
+box_data <- lur_data %>% 
+  select(site_id, campaign, week, bc_ug_m3) %>% 
+  mutate(week_id = paste(campaign, week, sep = "-"))
+
+ggplot(box_data) +
+  geom_boxplot(aes(x = week_id, y = bc_ug_m3, color = as.factor(campaign))) +
+  scale_color_viridis(name = "Campaign", discrete = T) +
+  xlab("Campaign week") + ylab("Distributed site BC concentration") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  simple_theme
+
+```
+
+3) Temporal trends in central site monitor BC, central site PM, and central site temperature
+
+```{r, include = T, echo = F}
+
+ggplot(bc_data) +
+  geom_point(aes(x = Date_Local, y = Arithmetic_Mean, color = monitor_id)) +
+  geom_line(aes(x = Date_Local, y = Arithmetic_Mean, color = monitor_id)) +
+  geom_smooth(aes(x = Date_Local, y = Arithmetic_Mean, color = monitor_id)) +
+  scale_color_viridis(discrete = T, name = "Monitor ID") +
+  xlab("Date") + ylab("Central site BC") +
+  simple_theme
+
+ggplot(pm_data) +
+  geom_point(aes(x = Date_Local, y = Arithmetic_Mean, color = monitor_id),
+             size = 0.5) +
+  geom_line(aes(x = Date_Local, y = Arithmetic_Mean, color = monitor_id)) +
+  geom_smooth(aes(x = Date_Local, y = Arithmetic_Mean, color = monitor_id)) +
+  scale_color_viridis(discrete = T, name = "Monitor ID") +
+  xlab("Date") + ylab("Central site PM") +
+  facet_wrap(. ~ monitor_id) +
+  simple_theme
+
+ggplot(no2_data) +
+  geom_point(aes(x = Date_Local, y = Arithmetic_Mean, color = monitor_id),
+             size = 0.5) +
+  geom_line(aes(x = Date_Local, y = Arithmetic_Mean, color = monitor_id)) +
+  geom_smooth(aes(x = Date_Local, y = Arithmetic_Mean, color = monitor_id)) +
+  scale_color_viridis(discrete = T, name = "Monitor ID") +
+  xlab("Date") + ylab("Central site NO2") +
+  facet_wrap(. ~ monitor_id) +
+  simple_theme
+
+ggplot(temp_data) +
+  geom_point(aes(x = Date_Local, y = Arithmetic_Mean, color = monitor_id),
+             size = 0.5) +
+  geom_line(aes(x = Date_Local, y = Arithmetic_Mean, color = monitor_id)) +
+  geom_smooth(aes(x = Date_Local, y = Arithmetic_Mean, color = monitor_id)) +
+  scale_color_viridis(discrete = T, name = "Monitor ID") +
+  xlab("Date") + ylab("Central site temperature") +
+  facet_wrap(. ~ monitor_id) +
+  simple_theme
+
+```
+
+6) Comparing the central site BC variability (daily) to the distributed site BC variability (weekly)
+
+```{r, include = T}
+ggplot() +
+  geom_point(data = week_data, aes(x = plot_date, y = bc_ug_m3, color = "dist")) +
+  geom_smooth(data = week_data, aes(x = plot_date, y = bc_ug_m3, color = "dist")) +
+  geom_point(data = bc_data, aes(x = Date_Local, y = Arithmetic_Mean, color = "cent")) +
+  geom_smooth(data = bc_data, aes(x = Date_Local, y = Arithmetic_Mean, color = "cent")) +
+  scale_color_viridis(discrete = T, name = "Sampling location",
+                      labels = c("dist" = "Distributed sites",
+                                 "cent" = "Central monitoring site")) +
+  ylab("Weekly BC concentrations ") + xlab("Sampling Start Date") +
+  simple_theme
+```
+
+6) Comparing the central site BC variability (averaged to the sampling period of each distributed site sample) to the distributed site BC variability
+
+```{r, include = T}
+ggplot() +
+  geom_point(data = week_data, aes(x = plot_date, y = bc_ug_m3, color = "dist")) +
+  geom_smooth(data = week_data, aes(x = plot_date, y = bc_ug_m3, color = "dist")) +
+  geom_point(data = week_data, aes(x = plot_date, y = central_bc_check, color = "cent")) +
+  geom_smooth(data = week_data, aes(x = plot_date, y = central_bc_check, color = "cent")) +
+  scale_color_viridis(discrete = T, name = "Sampling location",
+                      labels = c("dist" = "Distributed sites",
+                                 "cent" = "Central monitoring site")) +
+  ylab("Weekly BC concentrations ") + xlab("Sampling date") +
+  simple_theme
+```
+
+### C) Relationships between distributed site and central site BC
+
+1) Relationships between the distributed site BC and the central monitor are weak. The correlation coefficient for distributed site BC (time weighted average) to central site BC (averaged to the same sampling period for each filter) is `r cor(week_data$bc_ug_m3, week_data$central_bc_check)`
+
+```{r, include = T, echo = F}
+ggplot() +
+  geom_point(data = week_data, aes(x = bc_ug_m3, y = central_bc_check),
+             alpha = 0.25) +
+  geom_smooth(data = week_data, aes(x = bc_ug_m3, y = central_bc_check,
+                                    color = "lin"), method = "lm") +
+  geom_smooth(data = week_data, aes(x = bc_ug_m3, y = central_bc_check,
+                                    color = "loess")) +
+  scale_color_viridis(discrete = T, name = "Smoothing method",
+                      labels = c("lin" = "Linear model", "loess" = "LOESS")) +
+  xlab("TWA BC from distributed site") + 
+  ylab("Central monitoring site BC\naveraged to match distributed site periods") +
+  simple_theme
+```
+
+2) The relationship looks different when we average all distributed sites (based on sampling start and end date). Here the data are averaged across all sites with the same start and end sampling date 
+
+```{r, include = T, echo = F}
+ggplot() +
+  geom_point(data = week_mean_data, aes(x = bc_ug_m3, y = central_bc_check)) +
+  geom_smooth(data = week_mean_data, aes(x = bc_ug_m3, y = central_bc_check,
+                                    color = "lin"), method = "lm") +
+  geom_smooth(data = week_mean_data, aes(x = bc_ug_m3, y = central_bc_check,
+                                    color = "loess")) +
+  scale_color_viridis(discrete = T, name = "Smoothing method",
+                      labels = c("lin" = "Linear model", "loess" = "LOESS")) +
+  xlab("Average across all distributed sites with the same start and end dates") + 
+  ylab("Central monitoring site BC\naveraged to match distributed site periods") +
+  simple_theme
+```
+
+3) Relationships between central site PM~2.5~ (averaged across all monitors in the area) and distributed site BC. Here PM~2.5~ is averaged for the same sampling start and end dates as the distributed site measurements. The correlation coefficient for distributed site BC (time weighted average) to central site PM~2.5~ (averaged to the same sampling period for each filter) is `r cor(week_data$bc_ug_m3, week_data$central_pm_check, use = "complete.obs")`
+
+```{r, include = T, echo = F}
+ggplot() +
+  geom_point(data = week_data, aes(x = bc_ug_m3, y = central_pm_check),
+             alpha = 0.25) +
+  geom_smooth(data = week_data, aes(x = bc_ug_m3, y = central_pm_check,
+                                    color = "lin"), method = "lm") +
+  geom_smooth(data = week_data, aes(x = bc_ug_m3, y = central_pm_check,
+                                    color = "loess")) +
+  scale_color_viridis(discrete = T, name = "Smoothing method",
+                      labels = c("lin" = "Linear model", "loess" = "LOESS")) +
+  xlab("TWA BC from distributed site") + 
+  ylab("Central monitoring site PM2.5\naveraged to match distributed site periods") +
+  simple_theme
+```
+
+4) Relationships between central site temperature (averaged across all monitors in the area) and distributed site BC. Here temperature is averaged for the same sampling start and end dates as the distributed site measurements. The correlation coefficient for distributed site BC (time weighted average) to central site temperature (averaged to the same sampling period for each filter) is `r cor(week_data$bc_ug_m3, week_data$central_temp_check, use = "complete.obs")`
+
+```{r, include = T, echo = F}
+ggplot() +
+  geom_point(data = week_data, aes(x = bc_ug_m3, y = central_temp_check),
+             alpha = 0.25) +
+  geom_smooth(data = week_data, aes(x = bc_ug_m3, y = central_temp_check,
+                                    color = "lin"), method = "lm") +
+  geom_smooth(data = week_data, aes(x = bc_ug_m3, y = central_temp_check,
+                                    color = "loess")) +
+  scale_color_viridis(discrete = T, name = "Smoothing method",
+                      labels = c("lin" = "Linear model", "loess" = "LOESS")) +
+  xlab("TWA BC from distributed site") + 
+  ylab("Central monitoring site temperature\naveraged to match distributed site periods") +
+  simple_theme
+```
+
+5) Relationships between central site NO2 (averaged across all monitors in the area) and distributed site BC. Here NO2 is averaged for the same sampling start and end dates as the distributed site measurements. The correlation coefficient for distributed site BC (time weighted average) to central site temperature (averaged to the same sampling period for each filter) is `r cor(week_data$bc_ug_m3, week_data$central_no2_check, use = "complete.obs")`.
+
+```{r, include = T, echo = F}
+ggplot() +
+  geom_point(data = week_data, aes(x = bc_ug_m3, y = central_no2_check),
+             alpha = 0.25) +
+  geom_smooth(data = week_data, aes(x = bc_ug_m3, y = central_no2_check,
+                                    color = "lin"), method = "lm") +
+  geom_smooth(data = week_data, aes(x = bc_ug_m3, y = central_no2_check,
+                                    color = "loess")) +
+  scale_color_viridis(discrete = T, name = "Smoothing method",
+                      labels = c("lin" = "Linear model", "loess" = "LOESS")) +
+  xlab("TWA BC from distributed site") + 
+  ylab("Central monitoring site NO2\naveraged to match distributed site periods") +
+  simple_theme
+```
+
+
+### D) Charaterizing spatial and temporal variability
+
+1) What is the distribution of coefficient of variation (CV) values for each sampling location?
+
+Across all distributed site filters, the CV for black carbon measurements is `r round(sd(lur_data$bc_ug_m3, na.rm = T)/mean(lur_data$bc_ug_m3, na.rm = T), 2)*100`%
+
+``` {r}
+#' Study-wide data for each sampling location
+site_summary <- select(lur_data, StartDateLocal, site_id, bc_ug_m3,
+                       nn_pm, nn_no2, nn_temp, nn_bc,
+                       idw_pm, idw_no2, idw_temp,
+                       area_pm, area_no2, area_temp) %>%
+  filter(!is.na(StartDateLocal)) %>%
+  filter(!is.na(bc_ug_m3))  %>%
+  group_by(site_id) %>%
+  summarize(mean_bc = mean(bc_ug_m3, na.rm = T),
+            sd_bc = sd(bc_ug_m3, na.rm = T),
+            cv_bc = sd(bc_ug_m3, na.rm = T)/mean(bc_ug_m3, na.rm = T))
+
+#' Overall CV
+sd(site_summary$mean_bc, na.rm = T)/mean(site_summary$mean_bc, na.rm = T)
+sd(lur_data$bc_ug_m3, na.rm = T)/mean(lur_data$bc_ug_m3, na.rm = T)
+
+```
+
+Some distributed sampling locations have a large amount of variability (CV > 0.25) in weekly BC concentrations measured across the study period compared to others. 
+
+```{r , include = T}
+ggplot(site_summary) +
+  geom_histogram(aes(x = cv_bc)) +
+  xlab("CV of BC measurements at each sampling location") +
+  simple_theme
+```
+
+### E) Spatial patterns of BC based on simple inverse distance weighting
+
+``` {r}
+site_data_sp <- select(lur_data_sf, StartDateLocal, site_id, bc_ug_m3,
+                        nn_pm, nn_temp, nn_no2, nn_bc) %>%
+  filter(!is.na(StartDateLocal)) %>%
+  filter(!is.na(bc_ug_m3))  %>%
+  group_by(site_id) %>%
+  summarize(bc_ug_m3 = mean(bc_ug_m3, na.rm = T),
+            nn_pm = mean(nn_pm, na.rm=T),
+            nn_bc = mean(nn_bc, na.rm=T),
+            nn_no2 = mean(nn_no2, na.rm=T),
+            nn_temp = mean(nn_temp, na.rm=T)) %>%
+  as("Spatial")
+
+month_data_sp <- select(lur_data_sf, month, year, site_id, bc_ug_m3,
+                        nn_pm, nn_temp, nn_no2, nn_bc) %>%
+  filter(!is.na(month)) %>%
+  group_by(site_id, month, year) %>%
+  summarize(bc_ug_m3 = mean(bc_ug_m3, na.rm = T),
+            nn_pm = mean(nn_pm, na.rm=T),
+            nn_no2 = mean(nn_no2, na.rm=T),
+            nn_bc = mean(nn_bc, na.rm=T),
+            nn_temp = mean(nn_temp, na.rm=T)) %>%
+  mutate(StartDateLocal = as.Date(paste0(str_pad(month, width = 2, side = "left", pad = "0"),
+                                         "15", year),
+                                  format = "%m%d%Y")) %>%
+  as("Spatial")
+
+highways_sp <- as(highways, "Spatial")
+```
+
+1) Surface (IDW) based on average BC at each distributed sampling location, averaged across the entire study period
+
+``` {r map_all, include = T}
+library(latticeExtra)
+
+grid <- spsample(site_data_sp, type = 'regular', n = 10000)
+all_idw <- idw(site_data_sp$bc_ug_m3 ~ 1, site_data_sp, newdata = grid)
+spplot(all_idw["var1.pred"]) +
+  layer(sp.lines(highways_sp, col = "black", cex = 0.1))
+```
+
+2) Surfaces (IDW) based on monthly average BC at each sampling site
+
+**NOTE**: These plots aren't terribly informative yet. I've averaged each distributed site BC to the "monthly" level. However, because of the timing of our sample collection, some months are represented by as few as one filter at each location. Thus, these plots are just to give us a sense of whether or not things are potenitally changing spatially over time.
+
+a) May, 2018
+``` {r map_may, include = T}
+may_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2018-05-15"),]
+may_grid <- spsample(site_data_sp, type = 'regular', n = 10000)
+
+may_idw <- idw(may_data_sp$bc_ug_m3 ~ 1, may_data_sp, newdata = may_grid)
+spplot(may_idw["var1.pred"]) +
+  layer(sp.lines(highways_sp, col = "black", cex = 0.5))
+```
+
+b) June, 2018
+``` {r map_jun, include = T}
+jun_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2018-06-15"),]
+jun_grid <- spsample(site_data_sp, type = 'regular', n = 10000)
+
+jun_idw <- idw(jun_data_sp$bc_ug_m3 ~ 1, jun_data_sp, newdata = jun_grid)
+spplot(jun_idw["var1.pred"]) +
+  layer(sp.lines(highways_sp, col = "black", cex = 0.5))
+```
+
+c) July, 2018
+``` {r map_jul, include = T}
+jul_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2018-07-15"),]
+jul_grid <- spsample(site_data_sp, type = 'regular', n = 10000)
+
+jul_idw <- idw(jul_data_sp$bc_ug_m3 ~ 1, jul_data_sp, newdata = jul_grid)
+spplot(jul_idw["var1.pred"]) +
+  layer(sp.lines(highways_sp, col = "black", cex = 0.5))
+```
+
+d) August, 2018
+``` {r map_aug, include = T}
+aug_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2018-08-15"),]
+aug_grid <- spsample(site_data_sp, type = 'regular', n = 10000)
+
+aug_idw <- idw(aug_data_sp$bc_ug_m3 ~ 1, aug_data_sp, newdata = aug_grid)
+spplot(aug_idw["var1.pred"]) +
+  layer(sp.lines(highways_sp, col = "black", cex = 0.5))
+```
+
+e) October, 2018
+``` {r map_oct, include = T}
+oct_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2018-10-15"),]
+oct_grid <- spsample(site_data_sp, type = 'regular', n = 10000)
+
+oct_idw <- idw(oct_data_sp$bc_ug_m3 ~ 1, oct_data_sp, newdata = oct_grid)
+spplot(oct_idw["var1.pred"]) +
+  layer(sp.lines(highways_sp, col = "black", cex = 0.5))
+```
+
+f) November, 2018
+``` {r map_nov, include = T}
+nov_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2018-11-15"),]
+nov_grid <- spsample(site_data_sp, type = 'regular', n = 10000)
+
+nov_idw <- idw(nov_data_sp$bc_ug_m3 ~ 1, nov_data_sp, newdata = nov_grid)
+spplot(nov_idw["var1.pred"]) +
+  layer(sp.lines(highways_sp, col = "black", cex = 0.5))
+```
+
+g) January, 2019
+``` {r map_jan, include = T}
+jan_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2019-01-15"),]
+jan_grid <- spsample(site_data_sp, type = 'regular', n = 10000)
+
+jan_idw <- idw(jan_data_sp$bc_ug_m3 ~ 1, jan_data_sp, newdata = jan_grid)
+spplot(jan_idw["var1.pred"]) +
+  layer(sp.lines(highways_sp, col = "black", cex = 0.5))
+```
+
+h) February, 2019
+``` {r map_feb, include = T}
+feb_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2019-03-15"),]
+feb_grid <- spsample(site_data_sp, type = 'regular', n = 10000)
+
+feb_idw <- idw(feb_data_sp$bc_ug_m3 ~ 1, feb_data_sp, newdata = feb_grid)
+spplot(feb_idw["var1.pred"]) +
+  layer(sp.lines(highways_sp, col = "black", cex = 0.5))
+```
+
+i) March, 2019
+``` {r map_mar, include = T}
+mar_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2019-03-15"),]
+mar_grid <- spsample(site_data_sp, type = 'regular', n = 10000)
+
+mar_idw <- idw(mar_data_sp$bc_ug_m3 ~ 1, mar_data_sp, newdata = mar_grid)
+spplot(mar_idw["var1.pred"]) +
+  layer(sp.lines(highways_sp, col = "black", cex = 0.5))
+```
+
+## Meeting Notes
+In a meeting with Zev Ross (our spatial statistics consutltant) on Feb 4, 2020, we discussed the following issues with the dataset:
+
+- Temporal resolution
+    - We have weekly (roughly) data for our sampling locations, and our original thought was to aggregate to months
+    - However, we are missing some months and have sparse data for others (i.e., one week of data represents the whole month)
+    - Does a monthly model make sense if we have finer temporal data? We'd like to use the most temporally refined model possible
+- Spatial patterns over time
+    - Part of the challenge is that we do not yet know if spatial patterns remain the same over time
+    - Previous studies using hind-casted LUR have assumed that spatial patterns don't change over time and use a single point (i.e., a monitor) to raise and lower a surface.
+    - We need to understand if this is something that can be done in Denver
+- Variable selection
+    - The LASSO-to-Stepwise AIC approach was not a favorite of Zev's.
+    - He was concerned that the AIC methods were not appropriate, given that they don't consider how one variable affects others in the model
+    - The LASSO search window is too broad, and needs to be tightened
+    - Move forward with a LASSO approach with better initial parameters
+    - Also, CV needs to be a part of the variable selection process, not something that occurs after the fact
+    - We need to incorporate leave-location-out CV (think CAST package)
+- Incorporating time into the prediction model
+    - Time is an interesting challenge here
+    - We have repeated measures at our locations
+    - One option is to use a GAM with smoothing terms for time (e.g., julian day or week no.)
+    - More thought is needed here to make sure we're doing things correctly.
+    
+This meeting resulted in a list of to-do's for exploring our data. This script achieves the following:
+
+- Generates time-series plots of the LUR outcome variables and key spatiotemporal predictors
+- Maps the long-term averages at each location and creates an average surface using IDW
+- visualizes relationships between BC and the spatiotemporal predictors (BC at the near-road monitor, temperature, BC)
+- Maps average surfaces (IDW) for each month to assess whether spatial patterns are consistent across the year    
+

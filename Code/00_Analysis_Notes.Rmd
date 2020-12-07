@@ -1,0 +1,185 @@
+---
+title: "Analysis Notes"
+author: "Sheena Martenies"
+date: "11/24/2020"
+output: html_document
+---
+
+
+This repository contains code used to develop the LUR model for the ECHO Aim 1 project
+
+**Date created:** December 10, 2018
+
+**Author:** Sheena Martenies
+
+**Contact:** Sheena.Martenies@colostate.edu or smarte4@illinois.edu
+
+### Analytic Notes
+The LUR combines data from several different sources:
+
+- Filter data from the 4 field campaigns
+- Area monitoring data from the EPA
+- Area MET data from local airports
+- Smoke plume data from NOAA
+- Land use data from the National Land Cover Database
+- Emissions inventory data from EPA
+- Spatial data on hazardous land uses from CDPHE, COGCC, and CDOT
+- AADT data from the National Highway Performance Monitoring System
+
+For spatial data, the most recently available data were used.
+
+The file name suffix _AEA means that spatial data within that file (stored as 
+WKT) has been projected to Albers Equal Area conic and have units of meters
+
+Except for scripts numbered 00, scripts should be run in order.
+
+Data inputs are listed in the Data folder. All raw data are organized into
+folders within this directory. CSV files within the Data folder have been cleaned
+and are used in other scripts. The Folder Directory below outlines the file 
+structure.
+
+NOTE: Running the spatial covariates and spatiotemporal covariates scripts for
+the prediction grid (11c and 11d) take a very long time!
+
+When assigning weeks to each filter, we used the start and end dates (from UPAS metadata) and the isoweek() function in the lubridate package. This is done so that we can compare weeks across years if necessary. From the ?week page: isoweek() returns the week as it would appear in the ISO 8601 system, which uses a reoccurring leap week. An alternative would be to use epiweek(), which is the US CDC version of epidemiological week. It follows same rules as isoweek() but starts on Sunday. In other parts of the world the convention is to start epidemiological weeks on Monday, which is the same as isoweek. We opted to go with the isoweek because most of our sampling weeks started on Mondays or Tuesdays. 
+ISO weeks: https://en.Wikipedia.org/wiki/ISO_week_date
+
+Filters were also assigned a month and a season (1 = winter, 2 = spring, 3 = summer, 4 = fall) using meteorological seasons (e.g., winter = December, January, February). Month was assigned based on whichever month had more days during the sampling campaign (e.g., for samples that started 7/31/18 and ended 8/5/18, the filter would be assigned to August). The season was assigned based on the month
+
+For Campaigns 1 and 2, some of the logged run times (UPAS metadata) don't match the run times we would expect based on the field team reports of run times. This was due to an issue with the Rev 101 version of the UPAs firmware. When logged and calculated run times differed, we flagged the data. Time-weighted averages for PM and BC will be calculated using volumes based on logged run times and both versions of the calculated run time (which will be identical (within 0.5%) for many if not most of the samples).
+
+Based on the preliminary data analysis (13_Preliminary_Data_Analysis.html), we've decided it's OK to move forward using the TWAs using sample volumes calculated from the logged run time, the duty cycle, and the flow rate.
+
+UPAS volume data are flagged when the sampled volume is less than 1000 L or if the average flow rate differs from 1 L/min by more than 5% 
+
+For the gravimetric analysis of PM~2.5~, we considered field blanks "valid" when the mass difference between pre- and post-weighing is < 30 ug based on EPA Method 2.12 (See Chapter 10 Page 9). I added an additional criterion that at least 90% of the field blanks be valid to proceed. Per the EPA SOP, the sampled filters are not blank corrected (Chapter 10 page 21)
+[https://www3.epa.gov/ttnamti1/files/ambient/pm25/qa/m212.pdf]
+
+We also assumed that any filter with a mass difference > 1000 ug was potentially contaminated and was flagged as such. We didn't completely drop these values right away because it's possible some indoor concentrations could get that high, and it's also possible outdoor monitors could be impacted by localized sources (fires, cars, etc.)
+
+For the Sootscan analysis of black carbon, we have an issue where lots of values are negative because of "relaxing" of the filters between scans. This is caused potentially by off-gassing-- it's possible that the filters weren't conditioned long enough before we used them. During our consultation with Christian L'Orange (Powerhouse) on Nov 6, 2018, he suggested be "blank correct" the BC measurements if the blank values were consistent and small. I still need to find a good SOP to cite, but for now, I'm going to subtract the mean of the blanks (which will add mass when the mean is negative) if the absolute value of the coefficient of variation for the blank measurements is < 25%. These blank corrected measurements will be flagged in the data set.
+
+To get the time-weighted average concentration of metals, we need to know the standard area for the filter. Need to confirm that it's 7.065 cm2.(This is the value used in the SootScan analysis). When calculating the TWA for each metal, I just used the sample volumes calculated from the logged run time, the duty cycle, and the flow rate based on the analysis of the PM~2.5~ filters in 13_Preliminary_Data_Analysis.html. 
+
+Preliminary data analysis from Campaigns 1 & 2 suggests there was moderate to poor agreement between the UPAS monitors and the regulatory monitors at National Jewish (1400 Jackson), Globeville (4905 Acoma Street) and I-25 Denver (971 W. Yuma Street). Correlations were 0.43 and 0.25 for PM~2.5~ and BC, respectively. Mapping demonstrates that the filters are, in fact, collocated. We'll need to come up with a strategy for how we want to handle this-- updated on 01.30.19
+
+The first crude attempts at the LUR (using linear regression) worked much better for BC (with an adjusted R2 around 70%) compared to PM~2.5~ (Adjusted R2 around 20%)-- updated on 01.30.19
+
+To help with the PM LUR, I've redone the spatiotemporal covariates to be summarized at the month level so that we can instead predict exposures for each month (rather than each ISO week)-- updated on 02.06.19
+
+#### Calibration
+Our LUR sampling scheme involved collocated sampling at three EPA monitoring sites in the Denver metropolitan area. Two of these sites (Globeville and National Jewish) only have PM~2.5~ monitoring data. However, the near-road monitoring site at I-25 has both PM2.5 and black carbon. 
+
+I've been using the monitoring data from the I-25 site to fit a calibration curve (regression model) for the UPAS PM~2.5~ and BC data. The PM~2.5~ calibration model was decent, whereas the calibration curve for BC (using only the UPAS measurement to predict the monitor measurement) was terrible. I also fit calibration models for PM~2.5~ using data from the Globeville and National Jewish sites. These models performed similarly to the I-25 site model
+
+The regression model fit for the BC data across all campaigns was pretty poor. There didn't appear to be any correlation between the monitor data and the UPAS data. However, once the data were stratified by campaign, there were some obvious relationships. For some reason, the UPAS monitors performed differently based on the campaign. Notably, there was a negative relationship for the winter data. Christian L'Orange (Powerhouse) proposed a couple possibilities. First, ambient temperature might be an issue (e.g., there may be discrepancies between the actual sampled volume and the recorded sampling volume due to differences in density at cold temperature or the UPAS might have been prone to leaks). Second, differences in aerosol composition could also be an issue-- there is a delay between sample collection and the SootScan, and more volatile oragnics that absorb light at 880 nm could have been measured by the aethalometer and not by the SootScan. Importantly, the PM2.5 data doesn't seem to have this seasonal variability in UPAS vs. EPA monitor data, so temperature is less likely. Shantanu Jathar (CSU Mechanical Engineering) favored the "differences in aerosol composition" hypothesis, though it's difficult to examine with the data we have.
+
+One option  address this fit issue was to fit separate calibration curves for each campaign. However, we did not have collocated data for Campaign 1 (late spring/summer) because we weren't able to arrange access to the I-25 site before the summer. Separate seasonal models will require us to figure out which curve works best for the Campaign 1 data.
+
+I attempted to fit multivariate models with indicators for campaign and temperature, and was able to get a regression that explained >60% of the variability in filter-based BC concentrations, but using this model to adjust the filter BC concentrations didn't work. BUT! It provided evidence that season-specific models were most appropriate.
+
+Sheryl and I met with some resarchers at CSU (Shantanu Jathar, Ellison Carter, John Volckens, Ander Wilson, and Christian L'Orange) to talk about the issues we were having with the UPAS data. Some suggestions from this meeting included:
+
+- Using Deming (orthogonal) regression to fit a curve for the BC data due to errors in both the SootScan and the aethalometer. JV recommended we assume equal variances in the errors.
+- Looking at trends in the metals data (i.e., S, K, and Fe) from the nearby CSN site (not a co-location site) to see if there are similar trends (i.e., lower levels in the winter) that might corroborate our BC time trends
+
+The rest of this document walks through what we ended up doing to adjust the UPAS data. Ultimately I used both linear regression and deming regression to calibrate the filter-based PM~2.5~ and BC concentrations.  
+
+One outstanding issue will be to identify __why__ there were differences by campaign. This might require some further investigation. We might want to have the UPAS checked out (e.g., check for leaks, check to see if the flow is still calibrated correctly, etc.). Some possibilities could be differences in aerosol composition that affected BC measurements (e.g., EPA measurements are near direct read, whereas our filter-based methods are integrated and there is a long delay between sample collection and measurement); interference from metals; and issues with the UPAS in cold weather. I plotted some of the UPAS parameters and didn't see any obvious differences, aside some some issues at the end of one of the sampling runs for the first week of Campaign 4 (mass flow and volumetric flow rate drop off that the end of the run).
+
+Update: We currently have UPAS co-locating with the CSN site in Denver. Perhaps this dataset will shed some light on the seasonal issues we are seeing in our data.
+
+#### LUR Variable Selection
+We modified methods reported by Mercer et al. (2011). For each "category" of variables (e.g., elevation) we identified the two variables that had the highest R2 value. Then we subset the variables further using LASSO. Finally, we used stepwise AIC to get the best set of predictors. 
+
+Update: The LUR model was not working well so we've decided to move to a spatiotemporal model. Sheryl and I have been consulting with Josh Keller (Statistics, CSU) about his work on the MESA Air model. He has advised that me move to a ST model using the ```SpatioTemporal``` package in R. In this work, he used Partial Least Squares to 
+
+#### Model Fitting
+For the ISEE abstracts, I did some preliminary model fitting using the LASSO algorithm to reduce the number of covariates. For BC, I was fairly successful, in that I was able to get a CV R2 of ~68%. The PM~2.5~ model was abyssal. I think we're going to need to have the full data set (all four campaigns) as well as more buffers to try before finalizing the model.
+
+For my A&WMA abstract, I've switched to the ST model. The model is preliminary, but 
+
+#### Meeting Notes Feb 4, 2020 with Zev Ross
+- Temporal resolution
+    - We have weekly (roughly) data for our sampling locations, and our original thought was to aggregate to months
+    - However, we are missing some months and have sparse data for others (i.e., one week of data represents the whole month)
+    - Does a monthly model make sense if we have finer temporal data? We'd like to use the most temporally refined model possible
+- Spatial patterns over time
+    - Part of the challenge is that we do not yet know if spatial patterns remain the same over time
+    - Previous studies using hind-casted LUR have assumed that spatial patterns don't change over time and use a single point (i.e., a monitor) to raise and lower a surface.
+    - We need to understand if this is something that can be done in Denver
+- Variable selection
+    - The LASSO-to-Stepwise AIC approach was not a favorite of Zev's.
+    - He was concerned that the AIC methods were not appropriate, given that they don't consider how one variable affects others in the model
+    - The LASSO search window is too broad, and needs to be tightened
+    - Move forward with a LASSO approach with better initial parameters
+    - Also, CV needs to be a part of the variable selection process, not something that occurs after the fact
+    - We need to incorporate leave-location-out CV (think CAST package)
+- Incorporating time into the prediction model
+    - Time is an interesting challenge here
+    - We have repeated measures at our locations
+    - One option is to use a GAM with smoothing terms for time (e.g., Julian day or week no.)
+    - More thought is needed here to make sure we're doing things correctly.
+    
+#### Meeting Notes Feb 25, 2020 with Zev Ross
+Plan is to send Zev the data set and link him to the github so that he can get more acquainted with the data set.
+
+#### Meeting Notes March 5, 2020 with Josh Keller
+After meeting with Josh Keller (Statistics, CSU), we decided to try to implement the modeling framework used by the MESA Air team (Keller et al., 2015). This was implemented using the SpatioTemporal package in R.
+
+The original paper used PLS to select the spatial covariates. That will be the eventual approach for this analysis, but for now, I'm going to use the covariates selected by the LASSO model (see 16a_LUR_BC_average.R)
+
+**Update 03.18.20**: I was receiving an error when trying to use the estimate.STmodel() function from the SpatioTemporal package. I emailed Josh Keller for advice, and he responded with some suggestions. I've pasted his email response at the end of this script for safe keeping
+
+Basically, I'm going to start with the following:
+
+- Simple model (i.e., only one time trend)
+- iid covariance structure
+
+**Update 03.24.20**: Sheryl and I met with Josh Keller again today to go over the premliminary verison of the model and talk about next steps. Here are some of the take-aways from the meeting:
+
+- We should add the entirety of the BC monitoring data at the central site to help establish long-term time trends
+- We need to add degrees of freedom to the time trends. Josh recommended 4 per year (but we can also try 8, 12, etc.). Time trends will become more obvious with more data
+- I need to use the PM and NO2 monitoring data to establish temporal trends. These are different from the ST predictors! Start by plotting the time trends of PM, temp, and NO2. We might want to use PM for the temporal trends and NO2 and Temp as ST predictors (other combinations might work too, such as adding PM to the ST predictors). Don't use BC as a ST predictor
+    - When looking at the temporal trends, use ```createSTdata```
+    - Need to standardize PM and NO2
+    - When ready to create the ```STdata``` object for model fitting, assign the temporal trend dataset to the ```$trend``` slot of the ```STdata``` object
+- We also want to run a model without ST predictors as a comparison
+- Make the LUR function the same for the intercept and the time trends 
+- Rather than set ```nugget = ~type```, set ```nugget = T```
+- Change from the ```iid``` covariance structure to the ```exp``` structure
+- Run a number of initial conditions to try to find the right minimum
+    - For nuggets, set them to between -1 and -6
+    - For ranges, set them to between 0 and 4
+- Cross validation!
+    - For distributed sites, use 10-fold CV
+    - For central site, use LOOCV
+- There is a trade-off for the number of basis functions selected. For now, I'm going to stick with one, and then we can see if more make sense later
+
+**Update 11.24.20**: After peer-review at ES&T, we are making the following adjustments to the model:
+
+- We need to reexamine the Campaign 4 data to see if there are additional criteria we can use to identify "useable" data
+- We need to add the "Campaign 5" data from winter/spring 2020
+- We need to make sure that the model results are clearly communicated
+
+To achieve these aims, I'm doing the following:
+
+- Updating the data set to include more recent AQS data
+- Updating the data set to include the "campaign 5" data collected at the Yuma and Navajo street locations
+- Exploring the campaign 4 data in more detail
+
+### Folder Directory
+**/Code** contains all of the R scripts for this project
+
+**/Data** contains the raw and processed data used in the LUR:
+
+**/Figs** contains any figures generated in the analysis scripts or by 00_Make_Figures.R
+
+**/Presentations** contains any slide decks relating to the work in this project
+
+
+
+
+
+
+

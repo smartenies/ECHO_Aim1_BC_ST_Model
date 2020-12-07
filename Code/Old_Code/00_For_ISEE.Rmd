@@ -1,0 +1,306 @@
+---
+title: Developing a black carbon land use regression model for the Denver, CO metropolitan area
+author: "Sheena Martenies"
+date: "August 14, 2019"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+
+#' Load required libraries
+library(ggplot2)
+library(tidyverse)
+library(readxl)
+library(haven)
+library(xml2)
+library(rvest)
+library(qwraps2)
+library(sjPlot)
+
+#' For ggplots
+simple_theme <- theme(
+  #aspect.ratio = 1,
+  text  = element_text(family="Calibri",size = 12, color = 'black'),
+  panel.spacing.y = unit(0,"cm"),
+  panel.spacing.x = unit(0.25, "lines"),
+  panel.grid.minor = element_line(color = "transparent"),
+  panel.grid.major = element_line(color = "transparent"),
+  panel.border=element_rect(fill = NA),
+  panel.background=element_blank(),
+  axis.ticks = element_line(colour = "black"),
+  axis.text = element_text(color = "black", size=10),
+  # legend.position = c(0.1,0.1),
+  plot.margin=grid::unit(c(0,0,0,0), "mm"),
+  legend.key = element_blank()
+)
+windowsFonts(Calibri=windowsFont("TT Calibri"))
+options(scipen = 9999) #avoid scientific notation
+
+options(qwraps2_markup = "markdown")
+```
+
+# Authors and Affiliations
+**Sheena E. Martenies**$^a$, Sherry WeMott$^a$, Grace Kuiper$^a$, Kacy Lorber$^b$, Cody Dawson$^b$, Kevin Andresen$^b$, William B. Allshouse$^b$, Anne P. Starling$^{c,d}$, John L. Adgate$^b$, Dana Dabelea$^{c,d,e}$, and Sheryl Magzamen$^{a,c}$
+
+<font size="1.5">
+$^a$Environmental and Radiological Health Sciences, Colorado State University, Fort Collins, CO USA
+
+$^b$Department of Environmental and Occupational Health, Colorado School of Public Health, University of  Colorado Anschutz Medical Campus, Aurora, CO, USA
+
+$^c$Department of Epidemiology, Colorado School of Public Health, University of Colorado Anschutz Medical Campus, Aurora, CO, USA
+
+$^d$Lifecourse Epidemiology of Adiposity and Diabetes (LEAD Center), University of Colorado Anschutz Medical Campus, Aurora CO, USA
+
+$^e$Department of Pediatrics, School of Medicine, University of Colorado Anschutz Medical Campus, Aurora, CO, 	USA
+</font>
+
+**NOTE: The results of this analysis have not undergone peer-review and should be considered preliminary. Please do not cite or distribute.**
+
+The code for this project can be found on the author's GitHub page [here](https://github.com/smartenies/ECHO_Aim1_LUR).
+
+The first author can be contacted by email at sheena.martenies@colostate.edu
+
+# Abstract
+
+**Background**
+
+Denver, Colorado, a large metropolitan area at the base of the Rocky Mountains (elevation: 1609 m), suffers from poor air quality. Traffic is thought to be the predominant pollution source, but agriculture and industry also contribute. Our goal was to develop a land use regression (LUR) model to predict black carbon (PM~BC~) concentrations across the study area to facilitate retrospective exposure assessments for an ongoing birth cohort study.
+
+**Methods** 
+
+Four seven-week campaigns were conducted to capture filter-based integrated black carbon (PM~BC~) measurements from May 2018 to March 2019. Weekly integrated PM~2.5~ samples were collected using low cost monitors and PM~BC~ was measured using transmissometry at 880 nm. Weekly time-weighted average concentrations were calculated for each filter and concentrations were calibrated using a predictive model developed from a subset of filters co-located with a Federal Reference Method aethalometer. Filter concentrations were averaged to monthly means at each sampling location. Land-use characteristics were identified and summarized for buffer distances ranging 50-2500 m around each sampling site. We also included BC data from the local monitoring network and variables indicating the presence of wildfire smoke. PM~BC~ concentrations were log-transformed prior to model fitting. Covariates were selected using a two-step process. First, a generalized linear model was fit using the least absolute shrinkage and selection operator (LASSO). Second, a linear model was fit using a stepwise AIC process and the LASSO-selected variables. The final model was validated using leave-one-out cross validation and used to predict monthly concentrations for a 250 m grid across the study area. 
+
+**Results**
+
+We collected n = 917 filters from > 50 locations across the study area. The mean (SD) monthly PM~BC~ concentration across all sampling locations was 1.32 (0.2) $\mu$g/$m^2$. As expected, PM~BC~ concentrations were highest near major roads and highest during the winter and summer months, consistent with traffic and biomass burning (residential wood stoves and wildfires) being the predominant sources of PM~BC~ in the area. The final linear regression model for PM~BC~ selected using the LASSO and Stepwise-AIC methods had 11 predictors. When ranked based on the t-statistic for each predictor, the five most important predictors were annual average daily traffic (AADT) in a 50 m buffer, month, temperature, average impervious surface in a 1000 m buffer, and population density in a 2500 m buffer. The final linear regression model had a adjusted R$^2$ of 0.75 and a LOOCV R$^2$ of 0.74. 
+
+**Conclusions**
+
+Our LUR reasonably predicted PM~BC~ concentrations in 2018 and 2019. Future work will focus on hindcasting the LUR-based predictions to retrospectively assign air pollutant exposures for an ongoing birth cohort study based in Denver, CO. 
+
+
+# Introduction
+
+Denver, Colorado, a major metropolitan area at the foot of the Rocky Mountains has a combination of topography, meteorology, and sources that create a unique pollution mix (Vedal _et al._, 2009). Traffic is a predominant source of air pollution, and as a result, the area is currently in non-attainment of the 2008 ozone National Ambient Air Quality Standard (NAAQS) (US EPA, 2018). Despite a recent history of poor air quality in the region, Denver, CO remains understudied with respect to the health effects of ambient air pollutants. The lack of air pollution epidemiology studies in Denver is partially due to a lack of robust models available to assess air pollutant exposures.
+
+Land use regression (LUR) is a state-of-the-art method for modeling intra-urban air pollutant exposures, particularly for traffic related air pollution (TRAP). Over the last decade, black carbon (PM~BC~) has emerged as an important indicator of traffic-related air pollution (TRAP) exposures, complementing other indicators such as nitrogen dioxide and fine particulate matter with an aerodynamic diameter less than 2.5 $\mu$m (PM~2.5) (Hoek, 2017; Janssen _et al._, 2011). To address the gaps in available data for the Denver metropolitan area, we developed an LUR model focusing on PM~BC~ as the pollutant of interest.
+
+# Methods
+
+## Study Area 
+
+The study area consists of the Denver Metropolitan area (**Figure 1**). In order to facilitate the development of a land use regression model for this area, the boundary was designed to capture most of the local sources of air pollution in the Denver metro area, including the busiest interstate highways (I-70 and I-25) and several large industrial facilities.  
+
+```{r, out.width='50%', fig.align='center', fig.cap='Figure 1. Sampling locations'}
+knitr::include_graphics(here::here("Figs", "LUR_Sampling_Sites2.jpeg"))
+```
+
+## Sampling of PM~2.5~ in Denver, CO
+
+Our filter-based sampling campaign was designed to capture temporal variability in traffic-related air pollutants in Denver, CO. We conducted four 7-week sampling campaigns during which low-cost monitors (Ultrasonic Personal Air Samplers [UPAS], AST, Fort Collins, CO) collected PM~2.5~ samples from n = 54 locations across the study area. These monitors were previously validated against a federal Reference Monitor (Volckens _et al._, 2017). The UPAS monitors were run at a 75% duty cycle and a flow rate of 1 L/min for at least 5 days. Our campaigns collected samples during each season and captured wildfire events in the summer and fall of 2018. Sampling locations were chosen to be representative of the land use characteristics for the study area (e.g., based on proximity to roads and traffic counts and percent impervious surface in a buffer around the site) to provide spatial variability in concentrations. 
+
+Samples were collected on Teflon filters and analyzed for PM~BC~ (SootScan; Magee Scientific, Berkeley, CA) and metals (x-ray fluoroscopy). Based on the empirical elemental carbon relations between mass and absorbance for Teflon filters, we used $\sigma$ values of 4.2 $\mu$g/$cm^2$ to calculate the mass of PM~BC~ based on absorbance at 880 nm. For both the SootScan and metals analysis, we used a standard filter area of 7.065 $cm^2$.
+
+## Time-weighted average PM~BC~
+
+We calculated time-weighted average (TWA) PM~BC~ concentrations using the mass of PM~BC~ measured on each filter, the sampled volume calculated from the flow rate (1 L/min) and the recorded run time for each sampler. 
+
+One UPAS monitor was co-located with a regulatory aethalometer maintained by the Colorado Department of Health and Environment (CDPHE). We compared our filter-based PM~BC~ concentrations to the average PM~BC~ concentrations recorded at the aethalometer for each filter collection period. Filter-based concentrations were calibrated using the time-weighted average PM~BC~ and temperature recorded at the CDPHE monitor. After filter-based PM~BC~ concentrations were calibrated, we averaged filters at each location to monthly means.
+
+## GIS-based predictors of TRAP exposure
+
+We selected our GIS-based predictors of traffic-related air pollution on previous studies (e.g. Hankey and Marshall, 2015) and location specific indicators (e.g., wildfire smoke). The candidate predictors are summarized in **Table 1**. Predictors could either be spatial (e.g., land use characterization) or spatiotemporal (e.g., concentration of PM~2.5~ recorded at the closest FRM monitor). For non-distance related predictors (e.g., percent impervious surface), we started with six different buffers: 50 m, 100 m, 250 m, 500 m, 1000 m, and 2500 m. Distance and area-based GIS covariates were summarized for each sampling location in R.
+
+```{r echo = F, include = F, message = F}
+library(readxl)
+data_table <- read_xlsx(here::here("Data", "Data_Sources.xlsx"))
+```
+
+**Table 1. Summary of candidate LUR**
+```{r table1, results = 'asis', echo = F}
+options(knitr.kable.NA = '')
+knitr::kable(data_table)
+```
+
+## Spatiotemporal predictors of PM~BC~
+
+In addition to non-time-varying predictors such as land use characteristics, we also included several spatiotemporal predictors of PM~BC~. These included the monthly mean PM~2.5~, PM~BC~, and temperature recorded at the closest EPA monitoring site and an indicator of wildfire smoke. The presence of wildfire smoke was identified for each day of our sampling campaigns using data from the EPA monitoring network and the Hazard Mapping System from the National Oceanic and Atmospheric Administration (NOAA US EPA, 2019) using methods similar to those reported by Brey and Fischer (2016). We considered a monitor in the study area to be "wildfire smoke impacted" on a given day if the daily mean PM~2.5~ concentration measured at the monitor was more than 1 standard deviation above the 10 year average monthly concentration and if a wildfire smoke plume (as identified by NOAA analysts) was located within 50 km of the monitor. For the LUR, a sampling location was considered wildfire smoke-impacted for the month of interest if the closest monitor experienced any wildfire smoke days that month.
+
+## LUR Model Building
+
+### Predictor Pre-screening
+
+Out combination of potential BC predictors and buffer distances resulting in 78 candidate covariates for our LUR model. However, previous work has found that LUR models that rely on fewer than 100 sites may be biased when using more than 20 predictors in the model (Basagana _et al._, 2013; Harrell _et al._, 1996). Therefore, we performed a pre-screening step to reduce the number of predictors used in model building. For each predictor for which we had multiple buffers, we fit single-predictor linear regression models to identify which buffer distance was most strongly associated with filter PM~BC~ concentrations. Variables at different buffer distances were ranked by their R$^2$ values, and we chose the buffer distance with the highest R$^2$ for the model building process (discussed next). This pre-screening process reduced the number of potential covariates from 78 to 30.
+
+### Final model fitting
+
+Out final model fitting was done using methods similar to those reported by Mercer _et al._ (2011). We used the least absolute shrinkage and selection operator (LASSO) to further reduce the covariates including in our LUR model. We implemented LASSO using the caret package in R. To assess the robustness of our LASSO-based model, We compared the models selected by LASSO to those selected by the RIDGE and elastic net algorithms and found that each approach resulted in similar median R$^2$ and root mean square error (RMSE) values. To ensure the most parsimonious model was used, we compared the linear model with the LASSO-selected predictors to an alternative model fit using stepwise-AIC methods starting with the LASSO-selected predictors. Final model selection (Stepwise-AIC vs. LASSO) was made using AIC and adjusted-R$^2$ as criteria. After model fitting, we confirmed that the assumptions for linear regression were met.
+
+To evaluate the performance of our LUR, we used leave-one-out cross validation (LOOCV). We also calculated the root mean squared error (RMSE) for model predictions.
+
+# Results
+
+## Filter-based PM~BC~
+
+We collected n = 917 filters from across more than 50 sampling locations across the Denver metro area between May 2018 and March 2019. The filter-based PM~BC~ was calibrated using the following equation: $Y_{calibrated} = 2.46 + 0.20  Y_{UPAS} - 0.05  Temp + 0.0004  {Temp}^2$. This calibration equation had an adjusted R$^2$ value of 0.23. The mean (SD) monthly PM~BC~ concentration across all filters was 1.32 (0.19) $\mu$g/m$^3$ (**Table 2**). As expected, PM~BC~ concentrations were highest for sampling locations closest to the highways. 
+
+```{r echo = F, include = F, message = F}
+library(readxl)
+bc_all <- read_csv(here::here("Data/Final_Data", "Data_for_LUR.csv")) %>% 
+  select(bc_ug_m3, dist_m_highways)
+
+distance_q1 <- quantile(bc_all$dist_m_highways, probs = 0.25, na.rm = T)
+distance_q2 <- quantile(bc_all$dist_m_highways, probs = 0.50, na.rm = T)
+distance_q3 <- quantile(bc_all$dist_m_highways, probs = 0.75, na.rm = T)
+
+bc_all <- bc_all %>% 
+  mutate(distance_cat = ifelse(dist_m_highways <= distance_q1, 4,
+                              ifelse(dist_m_highways > distance_q1 & 
+                                       dist_m_highways <= distance_q2, 3, 
+                                     ifelse(dist_m_highways > distance_q2 & 
+                                              dist_m_highways <= distance_q3, 2, 1)))) %>% 
+  mutate(distance_cat_4 = ifelse(distance_cat == 4, 1, 0),
+         distance_cat_3 = ifelse(distance_cat == 3, 1, 0),
+         distance_cat_2 = ifelse(distance_cat == 2, 1, 0),
+         distance_cat_1 = ifelse(distance_cat == 1, 1, 0)) 
+
+summary_bc <-
+  list("BC (\u03BCg/m\u00B3)" =
+         list("mean (SD)" = ~ qwraps2::mean_sd(.data$bc_ug_m3, na_rm = T),
+              "min" = ~ round(min(.data$bc_ug_m3, na.rm = T), 2),
+              "max" = ~ round(max(.data$bc_ug_m3, na.rm = T), 2))
+  )
+
+full_exp <- summary_table(bc_all, summary_bc)
+by_distance_exp <- summary_table(dplyr::group_by(bc_all, distance_cat), summary_bc)
+combined_exp <- cbind(full_exp, by_distance_exp)
+```
+
+**Table 2. Summary statistics for monthly PM~BC~, stratified by quantiles of distance to highways**
+```{r table2, results = "asis", warning = F}
+print(combined_exp,
+      cnames = c("All filters (N = 404)",
+                 "> 1530 m (N = 99)",
+                 "760 to 1530 m (N = 101)",
+                 "281 to 759 m (N = 102)",
+                 "<= 280 m (N = 102)"))
+```
+
+## Final LUR model for PM~BC~
+
+Overall, the final model with 11 predictors performed similarly to the model with the LASSO-selected covariates; we selected this model to reduce the overall number of covariates included (**Table 3**). The final linear model had an adjusted R$^2$ of 0.75 and a LOOCV R$^2$ of 0.74. The RMSE for the final LUR model was 0.09 $\mu$g/m$^3$. 
+
+```{r echo = F, include = F, message = F}
+library(sjPlot)
+model_table <- read_csv(here::here("Results", "BC_Model_Comparisons.csv"))
+```
+
+**Table 3. Comparison of candidate regression models for PM~BC~**
+```{r table3, results = 'asis', echo = F}
+options(knitr.kable.NA = '')
+knitr::kable(model_table, col.names = c("Model", "No. Predictors", "AIC", "Adjusted R\u00B2", "LOOCV R\u00B2", "RMSE"))
+```
+
+
+The coefficients for the final LUR model are summarized in **Table 3**. When ranked by their t-statistics, the five most important predictors of PM~BC~ were annual average daily traffic (AADT) in a 50 m buffer, month, temperature, average impervious surface in a 1000 m buffer, and population density in a 2500 m buffer.
+```{r echo = F, include = F, message = F}
+library(sjPlot)
+load(here::here("Results", "BC_LUR_Final_Model.rdata"))
+```
+
+**Table 4. Final linear regression model for PM~BC~**
+```{r table4}
+tab_model(bc_final_lm,
+          dv.labels = NA,
+          pred.labels = c("Intercept", "Temperature (F)", "Elevation (100 m buffer)", 
+                          "Impervious surface (%, 1000 m buffer)", 
+                          "Population density (n/sq km; 2500 m buffer)",
+                          "Distance to highway (m)", "Distance to NLP site (m)", 
+                          "Distance to oil/gas well (m)", "AADT (50 m buffer)",
+                          "Smoke day", "February", "March", "May", "June", "July",
+                          "August", "October", "November", "BC at nearest monitor (ug/m3)"))
+```
+\  
+\  
+Plotting monthly PM~BC~ concentrations for the filters (**Figure 2**) shows reasonable agreement between the measured and predicted values.
+
+```{r, out.width='50%', fig.align='center', fig.cap='Figure 2. Comparison of meausured and predicted monthly mean PM~BC~'}
+knitr::include_graphics(here::here("Figs/Model_Dev", "BC_Final_Model_Meas_vs_Pred.jpeg"))
+```
+
+## Predicted PM~BC~ for the study area
+
+Predicted PM~BC~ concentrations by month are summarized in **Table 5**. Average PM~BC~ concentrations tended to be higher in the winter and summer months, consistent with the increased use of wood-burning stoves in the winter for household heating and increased wildfire smoke contributions in the summer (July and August).
+
+```{r echo = F, include = F, message = F}
+table_5 <- read_csv(here::here("Results", "Grid_Summary_Stats.csv"))
+```
+
+**Table 5. Summary statistics for predicted PM~BC~ by month (Jan, 2018 to June, 2019)**
+```{r table5, results = 'asis', echo = F}
+options(knitr.kable.NA = '')
+knitr::kable(table_5, col.names = c("Year", "Month", "Mean (SD)", "Min", "Median", "Max"))
+```
+
+PM~BC~ displayed the expected spatial patterns across the metropolitan area. **Figure 3** shows the PM~BC~ predicted for the 250 m grid for the months of January (A), April (B), July (C), and October (D), 2018.. For all four months shown, concentrations were highest near the major roadways and lowest in areas with open space. Temporal variability in PM~BC~ was smaller than spatial variability (**Table 5**), consistent with the predominant influence of traffic on PM~BC~ concentrations.
+
+```{r, out.width='70%', fig.align='center', fig.cap='Figure 3. Predicted PM~BC~ concentrations for four months in 2018'}
+knitr::include_graphics(here::here("Figs/ISEE_Poster", "BC_Month_Comparison.jpeg"))
+```
+
+# Discussion
+
+Our monthly LUR model for PM~BC~ in the Denver metropolitan area performed reasonably well. Our adjusted R$^2$ and LOOCV R$^2$ of 0.75 and 0.74 were consistent with or outperformed those reported in the literature (Dons _et al._, 2013; Hankey and Marshall, 2015; Kerckhoffs _et al._, 2016; Minet _et al._, 2018; Montagne _et al._, 2015; Saraswat _et al._, 2013; Tripathy _et al._, 2019). Our model included some key location-specific predictors, including the presence of wildfire smoke and distance to oil and gas wells, emphasizing the need to consider local sources when developing land use regression models.
+
+## Limitations
+
+There are some important limitations to note for when interpreting the results of this analysis. First, we were not able to sample each week of the year, and thus some temporal data are missing. Second, we were limited to residential and public sites where the security of our monitors could be assured. Although we selected locations to be representative of the land use characteristics of our study area, we may have missed some key sources and sinks.
+
+## Next steps
+
+This LUR model is intended to describe current and retrospective exposures for an ongoing birth cohort study in Denver, CO (Healthy Start; PI: Dabelea; 5UH3OD023248). To facilitate these exposure assessments, we will be completing the following next steps:
+
+- Fit additional LUR models for other pollutants of interest, including reactive oxidative species and metals associated with brake and tire wear
+
+- Hindcast the LUR predictions using the static geographic variable and temporally-resolved data from the local monitoring network 
+
+- Evaluate the performance of hindcasted LUR predictions. Wang _et al._ (2013) found that LUR models underpredict retrospective exposures when concentrations are decreasing over time. However, concentrations of traffic-related air pollutants (e.g., PM2.5 and NO2) measured at each monitor in the Denver metro area have remained roughly level over the last decade (US EPA, 2019) suggesting spatial patterns of exposure are similar between the start of the cohort recruitment period in 2009 and now
+
+# References
+Basagaña X, Aguilera I, Rivera M, Agis D, Foraster M, Marrugat J, et al. 2013. Measurement error in epidemiologic studies of air pollution based on land-use regression models. Am J Epidemiol 178:1342–1346; doi:10.1093/aje/kwt127.
+
+Brey SJ, Fischer EV. 2016. Smoke in the City: How Often and Where Does Smoke Impact Summertime Ozone in the United States? Environ Sci Technol 50:1288–1294; doi:10.1021/acs.est.5b05218.
+
+Dons E, Van Poppel M, Kochan B, Wets G, Int Panis L. 2013. Modeling temporal and spatial variability of traffic-related air pollution: Hourly land use regression models for black carbon. Atmospheric Environment 74:237–246; doi:10.1016/j.atmosenv.2013.03.050.
+
+Hankey S, Marshall JD. 2015. Land Use Regression Models of On-Road Particulate Air Pollution (Particle Number, Black Carbon, PM2.5, Particle Size) Using Mobile Monitoring. Environ Sci Technol 49:9194–9202; doi:10.1021/acs.est.5b01209.
+
+Harrell JF, Lee KL, Mark DB. 1996. Multivariable prognostic models: issues in developing models, evaluating assumptions and adequacy, and measuring and reducing errors. Statistics in medicine 15: 361–387.
+
+Hoek G. 2017. Methods for Assessing Long-Term Exposures to Outdoor Air Pollutants. Curr Envir Health Rpt 4:450–462; doi:10.1007/s40572-017-0169-5.
+
+Janssen NAH, Hoek G, Simic-Lawson M, Fischer P, van Bree L, ten Brink H, et al. 2011. Black carbon as an additional indicator of the adverse health effects of airborne particles compared with PM10 and PM2.5. Environ Health Perspect 119:1691–1699; doi:10.1289/ehp.1003369.
+
+Mercer LD, Szpiro AA, Sheppard L, Lindström J, Adar SD, Allen RW, et al. 2011. Comparing universal kriging and land-use regression for predicting concentrations of gaseous oxides of nitrogen (NOx) for the Multi-Ethnic Study of Atherosclerosis and Air Pollution (MESA Air). Atmospheric Environment 45:4412–4420; doi:10.1016/j.atmosenv.2011.05.043.
+
+Minet L, Liu R, Valois M-F, Xu J, Weichenthal S, Hatzopoulou M. 2018. Development and Comparison of Air Pollution Exposure Surfaces Derived from On-Road Mobile Monitoring and Short-Term Stationary Sidewalk Measurements. Environ Sci Technol 52:3512–3519; doi:10.1021/acs.est.7b05059.
+
+Montagne DR, Hoek G, Klompmaker JO, Wang M, Meliefste K, Brunekreef B. 2015. Land Use Regression Models for Ultrafine Particles and Black Carbon Based on Short-Term Monitoring Predict Past Spatial Variation. Environ Sci Technol 49:8712–8720; doi:10.1021/es505791g.
+
+Saraswat A, Apte JS, Kandlikar M, Brauer M, Henderson SB, Marshall JD. 2013. Spatiotemporal Land Use Regression Models of Fine, Ultrafine, and Black Carbon Particulate Matter in New Delhi, India. Environ Sci Technol 47:12903–12911; doi:10.1021/es401489h.
+
+Tripathy S, Tunno BJ, Michanowicz DR, Kinnee E, Shmool JLC, Gillooly S, et al. 2019. Hybrid land use regression modeling for estimating spatio-temporal exposures to PM2.5, BC, and metal components across a metropolitan area of complex terrain and industrial sources. Sci Total Environ 673:54–63; doi:10.1016/j.scitotenv.2019.03.453.
+
+US Environmental Protection Agency [US EPA]. 2018. 8-Hour Ozone (2008) Designated Area/State Information with Design Values. Green Book. Available: https://www3.epa.gov/airquality/greenbook/hbtcw.html [accessed 26 June 2018].
+
+US Environmental Protection Agency [US EPA]. 2019. AirData Website File Download Page. Available: https://aqs.epa.gov/aqsweb/airdata/download_files.html [accessed 3 July 2019].
+
+Vedal S, Hannigan MP, Dutton SJ, Miller SL, Milford JB, Rabinovitch N, et al. 2009. The Denver Aerosol Sources and Health (DASH) Study: Overview and Early Findings. Atmos Environ 43:1666–1673; doi:10.1016/j.atmosenv.2008.12.017.
+
+Volckens J, Quinn C, Leith D, Mehaffy J, Henry CS, Miller-Lionberg D. 2017. Development and evaluation of an ultrasonic personal aerosol sampler. Indoor Air 27:409–416; doi:10.1111/ina.12318.
+
+Wang R, Henderson SB, Sbihi H, Allen RW, Brauer M. 2013. Temporal stability of land use regression models for traffic-related air pollution. Atmospheric Environment 64:312–319; doi:10.1016/j.atmosenv.2012.09.056.

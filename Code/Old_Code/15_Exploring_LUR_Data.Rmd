@@ -1,0 +1,625 @@
+---
+title: "Exploring_LUR_Data"
+author: "Sheena Martenies"
+date: "2/12/2020"
+output: html_document
+---
+
+## Objectives
+The purpose of this script is to explore the LUR dataset and determine how we want to proceed with model development. In a meeting with Zev Ross on Feb 4, 2020, we discussed the following issues with the dataset:
+
+- Temporal resolution
+    - We have weekly (roughly) data for our sampling locations, and our original thought was to aggregate to months
+    - However, we are missing some months and have sparse data for others (i.e., one week of data represents the whole month)
+    - Does a monthly model make sense if we have finer temporal data? We'd like to use the most temporally refined model possible
+- Spatial patterns over time
+    - Part of the challenge is that we do not yet know if spatial patterns remain the same over time
+    - Previous studies using hind-casted LUR have assumed that spatial patterns don't change over time and use a single point (i.e., a monitor) to raise and lower a surface.
+    - We need to understand if this is something that can be done in Denver
+- Variable selection
+    - The LASSO-to-Stepwise AIC approach was not a favorite of Zev's.
+    - He was concerned that the AIC methods were not appropriate, given that they don't consider how one variable affects others in the model
+    - The LASSO search window is too broad, and needs to be tightened
+    - Move forward with a LASSO approach with better initial parameters
+    - Also, CV needs to be a part of the variable selection process, not something that occurs after the fact
+    - We need to incorporate leave-location-out CV (think CAST package)
+- Incorporating time into the prediction model
+    - Time is an interesting challenge here
+    - We have repeated measures at our locations
+    - One option is to use a GAM with smoothing terms for time (e.g., julian day or week no.)
+    - More thought is needed here to make sure we're doing things correctly.
+    
+This meeting resulted in a list of to-do's for exploring our data. This script achieves the following:
+
+- Generates time-series plots of the LUR outcome variables and key spatiotemporal predictors
+- Maps the long-term averages at each location and creates an average surface using IDW
+- visualizes relationships between BC and the spatiotemporal predictors (BC at the near-road monitor, temperature, BC)
+- Maps average surfaces (IDW) for each month to assess whether spatial patterns are consistent across the year    
+
+Overall findings of this analysis include:
+
+- The relationships between filter BC and monitor BC, PM2.5, and temperature are not linear
+- There appears to be both temporal and spatial variability in BC measured across the study area
+- Some months look similar in spatial patterns (e.g., July and August look simiar) but there are definitely differences
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, include = F)
+
+#' Description:
+#' This script is used for preliminary data exploration of the LUR dataset
+
+library(sf)
+library(gstat)
+library(sp)
+library(raster)
+library(ggplot2)
+library(ggmap)
+library(ggsn)
+library(ggthemes)
+library(extrafont)
+library(GGally)
+library(ggcorrplot)
+library(stringr)
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(viridis)
+library(caret)
+
+#' For ggplots
+loadfonts(device = "win")
+
+simple_theme <- theme(
+  #aspect.ratio = 1,
+  text  = element_text(family="Calibri",size = 12, color = 'black'),
+  panel.spacing.y = unit(0,"cm"),
+  panel.spacing.x = unit(0.25, "lines"),
+  panel.grid.minor = element_line(color = "transparent"),
+  panel.grid.major = element_line(color = "transparent"),
+  panel.border=element_rect(fill = NA),
+  panel.background=element_blank(),
+  axis.ticks = element_line(colour = "black"),
+  axis.text = element_text(color = "black", size=10),
+  # legend.position = c(0.1,0.1),
+  plot.margin=grid::unit(c(0,0,0,0), "mm"),
+  legend.key = element_blank()
+)
+
+options(scipen = 9999) #avoid scientific notation
+
+albers <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
+ll_nad83 <- "+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0"
+ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+```
+
+
+```{r read_in, include = F}
+#' Read in the dataset and subset to just the outdoor filters
+#' Define which variable we want to use-- BC calibrated using Deming regression
+
+data_name <- "Combined_Filter_Data_AEA.csv"
+lur_data <- read_csv(here::here("Data", data_name)) %>% 
+  filter(!is.na(lon)) %>% 
+  filter(indoor == 0) %>% 
+  filter(bc_ug_m3_dem > 0)
+
+#' Select a "calibrated" version of the data
+#' For now, go with Deming regression-- accounts for variability in the
+#' monitor and the UPAS data
+
+lur_data <- lur_data %>% 
+  rename("pm_ug_m3_raw" = "pm_ug_m3") %>% 
+  rename("pm_ug_m3" = "pm_ug_m3_dem") %>% 
+  rename("bc_ug_m3_raw" = "bc_ug_m3") %>% 
+  rename("bc_ug_m3" = "bc_ug_m3_dem")
+
+#' Add a unique site ID
+lur_data <- mutate(lur_data, site_id_lonlat = paste(lon, lat, sep = "_"))
+
+ids <- select(lur_data, site_id_lonlat) %>% 
+  distinct() %>% 
+  mutate(site_id = seq_along(site_id_lonlat))
+
+lur_data <- left_join(lur_data, ids, by = "site_id_lonlat")
+
+```
+
+### A) Time series plots of BC and key spatiotemporal predictors
+
+1) Starting with overall weekly and monthly means of BC across the entire study area
+
+```{r}
+
+#' Weekly average across study area
+week_data <- select(lur_data, StartDateLocal, site_id, bc_ug_m3, 
+                    nearest_3_neighbors_pm, nearest_3_neighbors_temp, nearest_3_neighbors_bc) %>% 
+  filter(!is.na(StartDateLocal)) %>% 
+  filter(!is.na(bc_ug_m3)) %>% 
+  group_by(StartDateLocal) %>% 
+  summarize(bc_ug_m3 = mean(bc_ug_m3, na.rm = T),
+            nearest_3_neighbors_pm = mean(nearest_3_neighbors_pm, na.rm=T),
+            nearest_3_neighbors_bc = mean(nearest_3_neighbors_bc, na.rm=T),
+            nearest_3_neighbors_temp = mean(nearest_3_neighbors_temp, na.rm=T)) 
+
+#' Weekly data for each filter
+week_data2 <- select(lur_data, StartDateLocal, site_id, bc_ug_m3, 
+                     nearest_3_neighbors_pm, nearest_3_neighbors_temp, nearest_3_neighbors_bc) %>% 
+  filter(!is.na(StartDateLocal)) %>% 
+  filter(!is.na(bc_ug_m3)) 
+
+#' Averaged across study area
+month_data <- select(lur_data, month, year, site_id, bc_ug_m3, 
+                     nearest_3_neighbors_pm, nearest_3_neighbors_temp, nearest_3_neighbors_bc) %>% 
+  filter(!is.na(month)) %>% 
+  group_by(month, year) %>% 
+  summarize(bc_ug_m3 = mean(bc_ug_m3, na.rm = T),
+            nearest_3_neighbors_pm = mean(nearest_3_neighbors_pm, na.rm=T),
+            nearest_3_neighbors_bc = mean(nearest_3_neighbors_bc, na.rm=T),
+            nearest_3_neighbors_temp = mean(nearest_3_neighbors_temp, na.rm=T)) %>% 
+  mutate(StartDateLocal = as.Date(paste0(str_pad(month, width = 2, side = "left", pad = "0"),
+                                         "15", year),
+                                  format = "%m%d%Y"))
+
+#' Monthly for each filter
+month_data2 <- select(lur_data, month, year, site_id, bc_ug_m3, 
+                     nearest_3_neighbors_pm, nearest_3_neighbors_temp, nearest_3_neighbors_bc) %>% 
+  filter(!is.na(month)) %>% 
+  group_by(site_id, month, year) %>% 
+  summarize(bc_ug_m3 = mean(bc_ug_m3, na.rm = T),
+            nearest_3_neighbors_pm = mean(nearest_3_neighbors_pm, na.rm=T),
+            nearest_3_neighbors_bc = mean(nearest_3_neighbors_bc, na.rm=T),
+            nearest_3_neighbors_temp = mean(nearest_3_neighbors_temp, na.rm=T)) %>% 
+  mutate(StartDateLocal = as.Date(paste0(str_pad(month, width = 2, side = "left", pad = "0"),
+                                         "15", year),
+                                  format = "%m%d%Y"))
+
+#' Study-wide data for each sampling location
+site_data <- select(lur_data, StartDateLocal, site_id, bc_ug_m3, 
+                      nearest_3_neighbors_pm, nearest_3_neighbors_temp, nearest_3_neighbors_bc) %>% 
+  filter(!is.na(StartDateLocal)) %>% 
+  filter(!is.na(bc_ug_m3))  %>% 
+  group_by(site_id) %>% 
+  summarize(bc_ug_m3 = mean(bc_ug_m3, na.rm = T),
+            nearest_3_neighbors_pm = mean(nearest_3_neighbors_pm, na.rm=T),
+            nearest_3_neighbors_bc = mean(nearest_3_neighbors_bc, na.rm=T),
+            nearest_3_neighbors_temp = mean(nearest_3_neighbors_temp, na.rm=T)) 
+```
+
+```{r ts_plots1, include = T}
+ggplot() +
+  geom_point(data = week_data, aes(x = StartDateLocal, y = bc_ug_m3,
+                                   color = "week", shape = "week"),
+             size = 1) +
+  geom_point(data = month_data, aes(x = StartDateLocal, y = bc_ug_m3,
+                                    color = "month", shape = "month"),
+             size = 3) +
+  geom_line(data = month_data, aes(x = StartDateLocal, y = bc_ug_m3,
+                                    color = "month"),
+             size = 0.5) +
+  scale_color_manual(name = "Period",
+                     values = c("week" = "red", "month" = "blue")) +
+  scale_shape_manual(name = "Period",
+                     values = c("week" = 1, "month" = 18)) +
+  ylab("Filter BC") + xlab("Sampling Date") +
+  simple_theme
+  
+```
+
+2) Temporal trends in BC at each unique sampling location (weekly TWAs)
+
+```{r ts_plots2, include = T}
+
+ggplot() +
+  geom_point(data = week_data2, aes(x = StartDateLocal, y = bc_ug_m3,
+                                   color = as.factor(site_id)),
+             size = 1) +
+  geom_smooth(data = week_data2, aes(x = StartDateLocal, y = bc_ug_m3,
+                                   color = as.factor(site_id)),
+              se = F, size = 0.2) +
+  guides(fill=guide_legend(title="Site ID")) +
+  ylab("Filter BC") + xlab("Sampling Date") +
+  simple_theme
+  
+```
+
+3) Temporal trends in monitor BC, PM, and temperature averaged across the entire study area
+
+```{r ts_plots3, include = T}
+ggplot() +
+  geom_point(data = week_data, aes(x = StartDateLocal, y = nearest_3_neighbors_pm,
+                                   color = "week", shape = "week"),
+             size = 1) +
+  geom_point(data = month_data, aes(x = StartDateLocal, y = nearest_3_neighbors_pm,
+                                    color = "month", shape = "month"),
+             size = 3) +
+  geom_line(data = month_data, aes(x = StartDateLocal, y = nearest_3_neighbors_pm,
+                                    color = "month"),
+             size = 0.5) +
+  scale_color_manual(name = "Period",
+                     values = c("week" = "red", "month" = "blue")) +
+  scale_shape_manual(name = "Period",
+                     values = c("week" = 1, "month" = 18)) +
+  ylab("Monitor PM2.5") + xlab("Sampling Date") +
+  simple_theme
+
+ggplot() +
+  geom_point(data = week_data, aes(x = StartDateLocal, y = nearest_3_neighbors_bc,
+                                   color = "week", shape = "week"),
+             size = 1) +
+  geom_point(data = month_data, aes(x = StartDateLocal, y = nearest_3_neighbors_bc,
+                                    color = "month", shape = "month"),
+             size = 3) +
+  geom_line(data = month_data, aes(x = StartDateLocal, y = nearest_3_neighbors_bc,
+                                    color = "month"),
+             size = 0.5) +
+  scale_color_manual(name = "Period",
+                     values = c("week" = "red", "month" = "blue")) +
+  scale_shape_manual(name = "Period",
+                     values = c("week" = 1, "month" = 18)) +
+  ylab("Monitor BC") + xlab("Sampling Date") +
+  simple_theme
+
+ggplot() +
+  geom_point(data = week_data, aes(x = StartDateLocal, y = nearest_3_neighbors_temp,
+                                   color = "week", shape = "week"),
+             size = 1) +
+  geom_point(data = month_data, aes(x = StartDateLocal, y = nearest_3_neighbors_temp,
+                                    color = "month", shape = "month"),
+             size = 3) +
+  geom_line(data = month_data, aes(x = StartDateLocal, y = nearest_3_neighbors_temp,
+                                    color = "month"),
+             size = 0.5) +
+  scale_color_manual(name = "Period",
+                     values = c("week" = "red", "month" = "blue")) +
+  scale_shape_manual(name = "Period",
+                     values = c("week" = 1, "month" = 18)) +
+  ylab("Monitor Temperature") + xlab("Sampling Date") +
+  simple_theme
+  
+```
+
+### B) Relationships between BC and spatiotemporal predictors averaged across the entire study period for each sampling locaton
+
+1) Site BC and monitor BC
+
+```{r}
+cor(site_data$bc_ug_m3, site_data$nearest_3_neighbors_bc)
+```
+
+The correlation coefficient for average site BC to average monitor BC is 0.81.
+
+```{r site_plots1, include = T}
+ggplot() +
+  geom_point(data = site_data, aes(y = bc_ug_m3, x = nearest_3_neighbors_bc,
+                                   color = "site", shape = "site"),
+             size = 1) +
+  geom_smooth(data = site_data, aes(y = bc_ug_m3, x = nearest_3_neighbors_bc,
+                                    color = "site"), se = F) +
+  scale_color_manual(name = "Period",
+                     values = c("site" = "darkgreen")) +
+  scale_shape_manual(name = "Period",
+                     values = c("site" = 16)) +
+  xlab("Monitor BC") + ylab("Site BC") +
+  simple_theme
+```
+
+2) Site BC and monitor PM (mean of closest 3 monitors to the sampling location) 
+
+```{r}
+cor(site_data$bc_ug_m3, site_data$nearest_3_neighbors_pm)
+```
+
+The correlation coefficient for average site BC to average monitor PM2.5 is 0.26.
+
+```{r site_plots2, include = T}
+ggplot() +
+  geom_point(data = site_data, aes(y = bc_ug_m3, x = nearest_3_neighbors_pm,
+                                   color = "site", shape = "site"),
+             size = 1) +
+  geom_smooth(data = site_data, aes(y = bc_ug_m3, x = nearest_3_neighbors_pm,
+                                    color = "site"), se = F) +
+  scale_color_manual(name = "Period",
+                     values = c("site" = "darkgreen")) +
+  scale_shape_manual(name = "Period",
+                     values = c("site" = 16)) +
+  xlab("Monitor PM2.5") + ylab("Site BC") +
+  simple_theme
+```
+
+3) Site BC and monitor temperature (mean of closest 3 monitors to the sampling location) 
+
+```{r}
+cor(site_data$bc_ug_m3, site_data$nearest_3_neighbors_temp)
+```
+
+The correlation coefficient for average site BC to average monitor temperature is -0.78.
+
+```{r site_plots3, include = T}
+ggplot() +
+  geom_point(data = site_data, aes(y = bc_ug_m3, x = nearest_3_neighbors_temp,
+                                   color = "site", shape = "site"),
+             size = 1) +
+  geom_smooth(data = site_data, aes(y = bc_ug_m3, x = nearest_3_neighbors_temp,
+                                    color = "site"), se = F) +
+  scale_color_manual(name = "Period",
+                     values = c("site" = "darkgreen")) +
+  scale_shape_manual(name = "Period",
+                     values = c("site" = 16)) +
+  xlab("Monitor Temperature") + ylab("Site BC") +
+  simple_theme
+```
+
+### C) Weekly and monthly relationships between filter BC and spatiotemporal predictors
+
+1) Filter BC and monitor BC by week and month
+
+```{r}
+cor(week_data2$bc_ug_m3, week_data2$nearest_3_neighbors_bc)
+cor(month_data2$bc_ug_m3, month_data2$nearest_3_neighbors_bc)
+```
+
+The correlation coefficients for weekly filter BC-monitor BC and monthly filter BC-monitor BC are 0.30 and 0.37, respectively.
+
+```{r scat_plots1, include = T}
+ggplot() +
+  geom_point(data = week_data2, aes(y = bc_ug_m3, x = nearest_3_neighbors_bc,
+                                   color = "week", shape = "week"),
+             size = 1) +
+  geom_smooth(data = week_data2, aes(y = bc_ug_m3, x = nearest_3_neighbors_bc,
+                                    color = "week"), se = F, size = 0.5) +
+  geom_point(data = month_data2, aes(y = bc_ug_m3, x = nearest_3_neighbors_bc,
+                                   color = "month", shape = "month"),
+             size = 1) +
+  geom_smooth(data = month_data2, aes(y = bc_ug_m3, x = nearest_3_neighbors_bc,
+                                    color = "month"), se = F, size = 0.5) +
+  scale_color_manual(name = "Period",
+                     values = c("week" = "red", "month" = "blue")) +
+  scale_shape_manual(name = "Period",
+                     values = c("week" = 1, "month" = 18)) +
+  xlab("Monitor BC") + ylab("Filter BC") +
+  simple_theme
+```
+
+2) Filter BC and monitor PM (mean of closest 3 monitors to the filter location) by week and month
+
+```{r}
+cor(week_data2$bc_ug_m3, week_data2$nearest_3_neighbors_pm)
+cor(month_data2$bc_ug_m3, month_data2$nearest_3_neighbors_pm)
+```
+
+The correlation coefficients for weekly filter BC-monitor PM2.5 and monthly filter BC-monitor PM2.5 are 0.09 and 0.13, respectively.
+
+```{r scat_plots2, include = T}
+ggplot() +
+  geom_point(data = week_data2, aes(y = bc_ug_m3, x = nearest_3_neighbors_pm,
+                                   color = "week", shape = "week"),
+             size = 1) +
+  geom_smooth(data = week_data2, aes(y = bc_ug_m3, x = nearest_3_neighbors_pm,
+                                    color = "week"), se = F, size = 0.5) +
+  geom_point(data = month_data2, aes(y = bc_ug_m3, x = nearest_3_neighbors_pm,
+                                   color = "month", shape = "month"),
+             size = 1) +
+  geom_smooth(data = month_data2, aes(y = bc_ug_m3, x = nearest_3_neighbors_pm,
+                                    color = "month"), se = F, size = 0.5) +
+  scale_color_manual(name = "Period",
+                     values = c("week" = "red", "month" = "blue")) +
+  scale_shape_manual(name = "Period",
+                     values = c("week" = 1, "month" = 18)) +
+  xlab("Monitor PM2.5") + ylab("Filter BC") +
+  simple_theme
+```
+
+3) Filter BC and monitor temperature (mean of closest 3 monitors to the filter location) by week and month
+
+```{r}
+cor(week_data2$bc_ug_m3, week_data2$nearest_3_neighbors_temp)
+cor(month_data2$bc_ug_m3, month_data2$nearest_3_neighbors_temp)
+```
+
+The correlation coefficients for weekly filter BC-monitor temperature and monthly filter BC-monitor temperature are -0.64 and -0.67, respectively.
+
+
+```{r scat_plots3, include = T}
+ggplot() +
+  geom_point(data = week_data2, aes(y = bc_ug_m3, x = nearest_3_neighbors_temp,
+                                   color = "week", shape = "week"),
+             size = 1) +
+  geom_smooth(data = week_data2, aes(y = bc_ug_m3, x = nearest_3_neighbors_temp,
+                                    color = "week"), se = F, size = 0.5) +
+  geom_point(data = month_data2, aes(y = bc_ug_m3, x = nearest_3_neighbors_temp,
+                                   color = "month", shape = "month"),
+             size = 1) +
+  geom_smooth(data = month_data2, aes(y = bc_ug_m3, x = nearest_3_neighbors_temp,
+                                    color = "month"), se = F, size = 0.5) +
+  scale_color_manual(name = "Period",
+                     values = c("week" = "red", "month" = "blue")) +
+  scale_shape_manual(name = "Period",
+                     values = c("week" = 1, "month" = 18)) +
+  xlab("Monitor Temperature") + ylab("Filter BC") +
+  simple_theme
+```
+
+### D) Charaterizing spatial and temporal variability
+
+1) What is the distribution of coefficient of variation (CV) values for each sampling location?
+
+``` {r}
+#' Study-wide data for each sampling location
+site_summary <- select(lur_data, StartDateLocal, site_id, bc_ug_m3, 
+                       nearest_3_neighbors_pm, nearest_3_neighbors_temp, nearest_3_neighbors_bc) %>% 
+  filter(!is.na(StartDateLocal)) %>% 
+  filter(!is.na(bc_ug_m3))  %>% 
+  group_by(site_id) %>% 
+  summarize(mean_bc = mean(bc_ug_m3, na.rm = T),
+            sd_bc = sd(bc_ug_m3, na.rm = T),
+            cv_bc = sd(bc_ug_m3, na.rm = T)/mean(bc_ug_m3, na.rm = T)) 
+
+
+#' Overall CV
+sd(site_summary$mean_bc, na.rm = T)/mean(site_summary$mean_bc, na.rm = T)
+sd(lur_data$bc_ug_m3, na.rm = T)/mean(lur_data$bc_ug_m3, na.rm = T)
+
+```
+
+Some sites have a large amount of variability (CV > 0.25) in weekly BC concentrations measured across the study period. This could be a challenge, since it implies the spatial patterns aren't consistent throughout the year
+
+```{r , include = T}
+ggplot(site_summary) +
+  geom_histogram(aes(x = cv_bc)) +
+  xlab("CV of BC measurements at each sampling location") +
+  simple_theme
+```
+
+### E) Spatial patterns of BC
+
+Our sampling locations cover the entire Denver metro area within the 470 loop.
+
+``` {r}
+data_name <- "Combined_Filter_Data_AEA.csv"
+lur_data_sf <- read_csv(here::here("Data", data_name)) %>% 
+  filter(!is.na(lon)) %>% 
+  mutate(site_id_lonlat = paste(lon, lat, sep = "_")) %>% 
+  left_join(ids, by = "site_id_lonlat") %>% 
+  st_as_sf(coords = c('lon', 'lat'), crs = ll_wgs84) %>%
+  st_transform(crs = albers) %>% 
+  filter(indoor == 0) %>% 
+  filter(bc_ug_m3_dem > 0) %>% 
+  rename("pm_ug_m3_raw" = "pm_ug_m3") %>% 
+  rename("pm_ug_m3" = "pm_ug_m3_dem") %>% 
+  rename("bc_ug_m3_raw" = "bc_ug_m3") %>% 
+  rename("bc_ug_m3" = "bc_ug_m3_dem")
+
+site_data_sp <- select(lur_data_sf, StartDateLocal, site_id, bc_ug_m3, 
+                       nearest_3_neighbors_pm, nearest_3_neighbors_temp, 
+                       nearest_3_neighbors_bc) %>% 
+  filter(!is.na(StartDateLocal)) %>% 
+  filter(!is.na(bc_ug_m3))  %>% 
+  group_by(site_id) %>% 
+  summarize(bc_ug_m3 = mean(bc_ug_m3, na.rm = T),
+            nearest_3_neighbors_pm = mean(nearest_3_neighbors_pm, na.rm=T),
+            nearest_3_neighbors_bc = mean(nearest_3_neighbors_bc, na.rm=T),
+            nearest_3_neighbors_temp = mean(nearest_3_neighbors_temp, na.rm=T)) %>% 
+  as("Spatial")
+
+month_data_sp <- select(lur_data_sf, month, year, site_id, bc_ug_m3, 
+                        nearest_3_neighbors_pm, nearest_3_neighbors_temp, 
+                        nearest_3_neighbors_bc) %>% 
+  filter(!is.na(month)) %>% 
+  group_by(site_id, month, year) %>% 
+  summarize(bc_ug_m3 = mean(bc_ug_m3, na.rm = T),
+            nearest_3_neighbors_pm = mean(nearest_3_neighbors_pm, na.rm=T),
+            nearest_3_neighbors_bc = mean(nearest_3_neighbors_bc, na.rm=T),
+            nearest_3_neighbors_temp = mean(nearest_3_neighbors_temp, na.rm=T)) %>% 
+  mutate(StartDateLocal = as.Date(paste0(str_pad(month, width = 2, side = "left", pad = "0"),
+                                         "15", year),
+                                  format = "%m%d%Y")) %>% 
+  as("Spatial")
+```
+
+``` {r site_map, include = T}
+#' Plot of sampling locations
+highways <- read_csv(here::here("Data", "Highways_AEA.csv")) %>% 
+  st_as_sf(wkt = "WKT", crs = albers)
+
+highways_sp <- as(highways, "Spatial")
+
+ggplot() +
+  geom_sf(data = lur_data_sf, aes(color = "pt"), show.legend = "point") +
+  geom_sf(data = highways, aes(color = "high"), show.legend = "line") +
+  scale_color_manual(name = "Feature",
+                     values = c("high" = "red", "pt" = "black"),
+                     labels = c("high" = "Highways", "pt" = "Sites")) +      
+  simple_theme
+```
+
+1) Surface (IDW) based on average BC at each sampling site (entire study period)
+
+``` {r map_all, include = T}
+grid <- spsample(site_data_sp, type = 'regular', n = 10000)  
+all_idw <- idw(site_data_sp$bc_ug_m3 ~ 1, site_data_sp, newdata = grid)
+spplot(all_idw["var1.pred"])
+```
+
+
+2) Surfaces (IDW) based on monthly average BC at each sampling site
+
+May, 2018
+``` {r map_may, include = T}
+may_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2018-05-15"),]
+may_grid <- spsample(site_data_sp, type = 'regular', n = 10000)  
+
+may_idw <- idw(may_data_sp$bc_ug_m3 ~ 1, may_data_sp, newdata = may_grid)
+spplot(may_idw["var1.pred"])
+```
+
+June, 2018
+``` {r map_jun, include = T}
+jun_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2018-06-15"),]
+jun_grid <- spsample(site_data_sp, type = 'regular', n = 10000)  
+
+jun_idw <- idw(jun_data_sp$bc_ug_m3 ~ 1, jun_data_sp, newdata = jun_grid)
+spplot(jun_idw["var1.pred"])
+```
+
+July, 2018
+``` {r map_jul, include = T}
+jul_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2018-07-15"),]
+jul_grid <- spsample(site_data_sp, type = 'regular', n = 10000)  
+
+jul_idw <- idw(jul_data_sp$bc_ug_m3 ~ 1, jul_data_sp, newdata = jul_grid)
+spplot(jul_idw["var1.pred"])
+```
+
+August, 2018
+``` {r map_aug, include = T}
+aug_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2018-08-15"),]
+aug_grid <- spsample(site_data_sp, type = 'regular', n = 10000)  
+
+aug_idw <- idw(aug_data_sp$bc_ug_m3 ~ 1, aug_data_sp, newdata = aug_grid)
+spplot(aug_idw["var1.pred"])
+```
+
+October, 2018
+``` {r map_oct, include = T}
+oct_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2018-10-15"),]
+oct_grid <- spsample(site_data_sp, type = 'regular', n = 10000)  
+
+oct_idw <- idw(oct_data_sp$bc_ug_m3 ~ 1, oct_data_sp, newdata = oct_grid)
+spplot(oct_idw["var1.pred"])
+```
+
+November, 2018
+``` {r map_nov, include = T}
+nov_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2018-11-15"),]
+nov_grid <- spsample(site_data_sp, type = 'regular', n = 10000)  
+
+nov_idw <- idw(nov_data_sp$bc_ug_m3 ~ 1, nov_data_sp, newdata = nov_grid)
+spplot(nov_idw["var1.pred"])
+```
+
+January, 2019
+``` {r map_jan, include = T}
+jan_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2019-01-15"),]
+jan_grid <- spsample(site_data_sp, type = 'regular', n = 10000)  
+
+jan_idw <- idw(jan_data_sp$bc_ug_m3 ~ 1, jan_data_sp, newdata = jan_grid)
+spplot(jan_idw["var1.pred"])
+```
+
+February, 2019
+``` {r map_feb, include = T}
+feb_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2019-03-15"),]
+feb_grid <- spsample(site_data_sp, type = 'regular', n = 10000)  
+
+feb_idw <- idw(feb_data_sp$bc_ug_m3 ~ 1, feb_data_sp, newdata = feb_grid)
+spplot(feb_idw["var1.pred"])
+```
+
+March, 2019
+``` {r map_mar, include = T}
+mar_data_sp <- month_data_sp[which(month_data_sp$StartDateLocal == "2019-03-15"),]
+mar_grid <- spsample(site_data_sp, type = 'regular', n = 10000)  
+
+mar_idw <- idw(mar_data_sp$bc_ug_m3 ~ 1, mar_data_sp, newdata = mar_grid)
+spplot(mar_idw["var1.pred"])
+```

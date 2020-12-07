@@ -1,0 +1,659 @@
+---
+title: "ECHO Aim 1 LUR"
+author: "Sheena Martenies"
+date: "May 3, 2018"
+output: html_document
+---
+
+#### This code summarizes land cover and traffic variables for the 250 m LUR grid and compares denisty functions for the entire grid to those containing the interested participants
+
+#####Note: the locations of health start participants in the maps shown here have been jittered to protect HS participant identities. Any ID variables used are just sequential IDs that are not tied to participant records in the HS dataset
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=F, warning=F)
+library(raster)
+library(sf)
+library(ggplot2)
+library(leaflet)
+library(ggmap)
+library(tidyverse)
+library(readxl)
+library(knitr)
+
+ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+albers <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
+utm_13 <- "+init=epsg:26913"
+
+#' For ggplots
+simple_theme <- theme(
+  #aspect.ratio = 1,
+  text  = element_text(family="Calibri",size = 12, color = 'black'),
+  panel.spacing.y = unit(0,"cm"),
+  panel.spacing.x = unit(0.25, "lines"),
+  panel.grid.minor = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border=element_rect(fill = NA),
+  panel.background=element_blank(),
+  axis.ticks = element_line(colour = "black"),
+  axis.text = element_text(color = "black", size=10),
+  # legend.position = c(0.1,0.1),
+  plot.margin=grid::unit(c(0,0,0,0), "mm"),
+  legend.key = element_blank()
+)
+windowsFonts(Calibri=windowsFont("TT Calibri"))
+```
+
+
+### Generating the grid and indentifying interested participants and potenital community monitoring locations within the grid boundary
+
+1) Create a 250 m grid for the study area bounded by the 470 loop
+```{r echo=F}
+load("./Processed_Data/LUR boundary.RData")
+bound_ll <- st_transform(bound_1km, crs=ll_wgs84)
+
+#' base map for the area
+base_map <- get_map(location=unname(st_bbox(bound_ll)), maptype="roadmap",
+                    zoom = 10, source="google")
+save(base_map, file="./Processed_Data/google base map.RData")
+load("./Processed_Data/google base map.RData")
+
+ggmap(base_map) +
+  ggtitle("Study Area Boundary") +
+  geom_sf(data=st_sf(bound_ll), 
+          inherit.aes = F, color="black", fill=NA, size=1) +
+  simple_theme
+```
+
+
+2) Identify interested participants and community monitor locations
+Note: participant locations have been jittered
+```{r echo=F}
+load("./Processed_Data/All Enrolled Participants.RData")
+load("./Processed_Data/To Contact Participants.RData")
+load("./Processed_Data/Preferred Community Monitors.RData")
+load("./Processed_Data/LUR boundary.RData")
+
+bound_ll <- st_transform(bound_1km, crs=ll_wgs84)
+mon_ll <- st_transform(mon, crs=ll_wgs84)
+hs_ll <- st_transform(hs, crs=ll_wgs84)
+hs_new_ll <- st_transform(hs_new, crs=ll_wgs84)
+  
+#' base map for the area
+load("./Processed_Data/google base map.RData")
+
+ggmap(base_map) +
+  ggtitle("Monitor locations (participants jittered)") +
+  geom_sf(data=st_sf(bound_ll), 
+          inherit.aes = F, color="black", fill=NA, size=1) +
+  geom_sf(data=mon_ll, 
+          inherit.aes = F, aes(color="mon", fill="mon"), pch=20, size=3) +
+  geom_sf(data=st_jitter(hs_ll, factor=0.02), 
+          inherit.aes = F, aes(color="hs", fill="hs"), pch=20, size=3) +
+  geom_sf(data=st_jitter(hs_new_ll, factor=0.02), 
+          inherit.aes = F, aes(color="hs2", fill="hs2"), pch=20, size=3) +
+  scale_color_manual(name="Monitor Type",
+                     values = c("mon" = "blue", "hs" = "red", "hs2" = "darkgreen"),
+                     labels = c("mon" = "Community", "hs" = "Enrolled", "hs2" = "To Contact")) +
+  scale_fill_manual(name="Monitor Type",
+                    values = c("mon" = "blue", "hs" = "red", "hs2" = "darkgreen"),
+                    labels = c("mon" = "Community", "hs" = "Enrolled", "hs2" = "To Contact")) +
+  theme(legend.position = "right") +
+  coord_sf(ylim=c(39.5, 40.1)) +
+  simple_theme
+```
+
+#####Interactive map with grid attributes for monitoring locations by type
+Note: participant locations have been jittered
+```{r echo=F}
+load("./Processed_Data/Grid 250 m with attributes.RData")
+load("./Processed_Data/Grid 250 m with monitors.RData")
+
+hs_att <- hs %>%
+  st_join(., grid_att) %>%
+  st_transform(crs=ll_wgs84) %>%
+  st_jitter(factor=0.02)
+
+hs_new_att <- hs_new %>%
+  st_join(., grid_att) %>%
+  st_transform(crs=ll_wgs84) %>%
+  st_jitter(factor=0.02)
+
+mon_att <- mon %>%
+  st_join(., grid_att) %>%
+  st_transform(crs=ll_wgs84)
+
+# leaflet(data = bound_ll) %>%
+#   addTiles %>%
+#   addPolygons(color="black", weight=1, opacity=0.2) %>%
+#   addCircleMarkers(data=hs_att, ~lon, ~lat, color="red", 
+#                    fillColor="red", opacity=0.8, weight = 2, radius=5,
+#              popup=~paste("Participant No.: ", seq_id, "<br>",
+#                           "Tree cover (%): ", tree_cover, "<br>",
+#                           "Impervious (%): ", impervious, "<br>",
+#                           "Highways (km): ", round(highway_km, 2), "<br>",
+#                           "Major roads (km): ", round(major_km, 2), "<br>",
+#                           "AADT: ", round(aadt, 2), "<br>",
+#                           "Pop denisty (n/km2): ", round(pop_den, 2), "<br>",
+#                           "Housing denisty (n/km2): ", round(housing_den, 2), "<br>",
+#                           "SFH denisty (n/km2): ", round(single_den, 2), "<br>",
+#                           "MFH denisty (n/km2): ", round(multi_den, 2), "<br>",
+#                           "MH denisty (n/km2): ", round(mobile_den, 2), "<br>",
+#                           sep="")) %>%
+#     addCircleMarkers(data = mon_att, ~lon, ~lat, color="blue", 
+#                      fillColor="blue", opacity=0.8, weight = 2, radius=5,
+#              popup=~paste("Monitor No.: ", seq_id, "<br>",
+#                           "Tree cover (%): ", tree_cover, "<br>",
+#                           "Impervious (%): ", impervious, "<br>",
+#                           "Highways (km): ", round(highway_km, 2), "<br>",
+#                           "Major roads (km): ", round(major_km, 2), "<br>",
+#                           "AADT: ", round(aadt, 2), "<br>",
+#                           "Pop denisty (n/km2): ", round(pop_den, 2), "<br>",
+#                           "Housing denisty (n/km2): ", round(housing_den, 2), "<br>",
+#                           "SFH denisty (n/km2): ", round(single_den, 2), "<br>",
+#                           "MFH denisty (n/km2): ", round(multi_den, 2), "<br>",
+#                           "MH denisty (n/km2): ", round(mobile_den, 2), "<br>",
+#                           sep=""))
+```
+
+### Table of participant grid cell attributes
+```{r results="asis"}
+kable(hs_att[,-1], digits=2,
+      caption="Enrolled Participant cell attributes", row.names = F)
+kable(hs_new_att[,-1], digits=2,
+      caption="Participant to be contacted cell attributes", row.names = F)
+kable(mon_att, digits=2,
+      caption="Community monitor cell attributes", row.names = F)
+```
+
+<!-- ### Summarizing land cover and road density characteristics across the study area -->
+
+<!-- 3) Land cover data -->
+
+<!-- ```{r echo=F} -->
+<!-- # load("./Processed_Data/tree_cover.RData") -->
+<!-- # spplot(tree, main="Percent tree cover (30 m raster)") -->
+<!-- spplot(grid_250, zcol="tree_cover", -->
+<!--        main="Percent tree cover (250 m grid)") -->
+
+<!-- # load("./Processed_Data/impervious.RData") -->
+<!-- # spplot(impervious, main="Percent impervious surface (30 m raster)") -->
+<!-- spplot(grid_250, zcol="impervious", -->
+<!--        main="Percent impervious surface (250 m grid)") -->
+
+<!-- # load("./Processed_Data/land_use.RData") -->
+<!-- # plot(land_use, main="Land use category (30 m raster)") -->
+<!-- spplot(grid_250, zcol="land_use", -->
+<!--        main="Land use category (most frequent; 250 m grid)") -->
+<!-- ``` -->
+
+<!-- 4) Highways and major roads -->
+
+<!-- ```{r} -->
+<!-- # load("./Processed_Data/highways.RData") -->
+<!-- # load("./Processed_Data/major roads.RData") -->
+<!-- # load("./Processed_Data/local roads.RData") -->
+<!-- #  -->
+<!-- # plot(local, col="grey50", main="Road network in the study area") -->
+<!-- # plot(major, col="blue", add=T) -->
+<!-- # #plot(major, col="blue", main="Road network in the study area") -->
+<!-- # plot(highways, col="red", add=T) -->
+<!-- spplot(grid_250, zcol="road_km_wt", -->
+<!--        main="Weighted sum (km) of highways and major roads (250 m grid)") -->
+<!-- ``` -->
+
+<!-- 5) AADT (Based on NHPMS data for major roads and interstates) -->
+
+<!-- ```{r} -->
+<!-- # library(RColorBrewer) -->
+<!-- # load("./Processed_Data/nhpms_aadt.RData") -->
+<!-- #  -->
+<!-- # cols <- brewer.pal(n=9,name="YlOrRd")[cut(nhpms_aadt$aadt, 9)] -->
+<!-- #  -->
+<!-- # plot(nhpms_aadt, col=cols) -->
+<!-- spplot(grid_250, zcol="aadt", -->
+<!--        main="AADT from highways and major roads (250 m grid)") -->
+<!-- ``` -->
+
+<!-- 6) Population and housing density -->
+
+<!-- ```{r} -->
+<!-- # load("./Processed_Data/ACS_2016_BG.RData") -->
+<!-- #  -->
+<!-- # cols <- brewer.pal(n=8,name="YlOrRd")[cut(bg$pop_den, 8)] -->
+<!-- # plot(bg, col=cols, main="Population denisty (block group level)") -->
+<!-- spplot(grid_250, zcol="pop_den", -->
+<!--        main="Population density (250 m grid)") -->
+
+<!-- # cols <- brewer.pal(n=8,name="YlOrRd")[cut(bg$housing_den, 8)] -->
+<!-- # plot(bg, col=cols, main="Housing denisty (block group level)") -->
+<!-- spplot(grid_250, zcol="housing_den", -->
+<!--        main="Housing housing density (250 m grid)") -->
+
+<!-- # cols <- brewer.pal(n=8,name="YlOrRd")[cut(bg$single_den, 8)] -->
+<!-- # plot(bg, col=cols, main="Single-family housing denisty (block group level)") -->
+<!-- spplot(grid_250, zcol="single_den", -->
+<!--        main="Single-family housing density (250 m grid)") -->
+
+<!-- # cols <- brewer.pal(n=8,name="YlOrRd")[cut(bg$multi_den, 8)] -->
+<!-- # plot(bg, col=cols, main="Multi-family housing denisty (block group level)") -->
+<!-- spplot(grid_250, zcol="multi_den", -->
+<!--        main="Multi-family housing density (250 m grid)") -->
+
+<!-- # cols <- brewer.pal(n=8,name="YlOrRd")[cut(bg$mobile_den, 8)] -->
+<!-- # plot(bg, col=cols, main="Mobile housing denisty (block group level)") -->
+<!-- spplot(grid_250, zcol="mobile_den", -->
+<!--        main="Mobile housing density (250 m grid)") -->
+<!-- ``` -->
+
+### Comparing spatial attributes for participant grid cells and all grid cells
+
+```{r}
+load("./Processed_Data/Grid 250 m with attributes.RData")
+load("./Processed_Data/Grid 250 m with monitors.RData")
+
+grid_all_df <- left_join(grid_mon, st_set_geometry(grid_att, NULL), by="grid_id")
+
+grid_cm_df <- filter(grid_all_df, cm==1)
+grid_mon_df <- filter(grid_all_df, mon==1)
+grid_hs_df <- filter(grid_all_df, hs==1)
+grid_hs_new_df <- filter(grid_all_df, hs_new==1)
+```
+
+##### All grid cells
+```{r results="asis"}
+library(tidyverse)
+grid_all_change <- st_set_geometry(grid_all_df, NULL)
+grid_all_change <- grid_all_change[,c(6:7,9:12,16:24)]
+colnames(grid_all_change) <- gsub("_", ".", colnames(grid_all_change))
+
+grid_all_sum <-  grid_all_change %>%
+  summarise_each(funs(max, median, mean, min)) %>%
+  gather(variable, value) %>%
+  separate(variable, c("var", "stat"), sep = "_") %>%
+  spread(var, value)
+
+kable(grid_all_sum, digits=2)
+
+```
+
+##### All grid cells containing an HS participant or monitor
+```{r results="asis"}
+grid_mon_change <- st_set_geometry(grid_mon_df, NULL)
+grid_mon_change <- grid_mon_change[,c(6:7,9:12,16:24)]
+colnames(grid_mon_change) <- gsub("_", ".", colnames(grid_mon_change))
+
+grid_mon_sum <-  grid_mon_change %>%
+  summarise_each(funs(max, median, mean, min)) %>%
+  gather(variable, value) %>%
+  separate(variable, c("var", "stat"), sep = "_") %>%
+  spread(var, value)
+
+kable(grid_mon_sum, digits=2)
+```
+
+### Dot plots and smoothed density plots for each each attribute
+
+#### Percent tree cover
+```{r}
+ggplot() +
+  geom_density(data=grid_all_df, aes(x=tree_cover, fill="all")) + 
+  geom_density(data=grid_cm_df, aes(x=tree_cover, fill="mon"),
+               alpha=0.75) + 
+  geom_density(data=grid_hs_df, aes(x=tree_cover, fill="hs"),
+               alpha=0.5) + 
+  geom_density(data=grid_hs_new_df, aes(x=tree_cover, fill="hs_new"),
+               alpha=0.25) + 
+  scale_fill_manual(name="Distribution",
+                    values = c("all" = "red", "mon" = "blue", "hs"="green", "hs_new" = "orange"),
+                    labels = c("all" = "All grid cells", "mon" = "Monitor grid cells",
+                               "hs" = "Enrolled participants", "hs_new" = "Participants to contact")) +
+  xlab("Percent Tree Cover") +
+  simple_theme
+
+# tree_cov_d <- ggplot(data=grid_all_df) +
+#   geom_dotplot(aes(x = factor(grid_all_df$mon),
+#                    y = grid_all_df$tree_cover, 
+#                    fill=factor(grid_all_df$mon)),
+#                binaxis = "y", method="histodot",
+#                stackdir = "center", binpositions = "all") +
+#   scale_fill_manual(name="Distribution",
+#                     values = c("0" = "red", "1" = "blue"),
+#                     labels = c("All grid cells", "Monitor grid cells")) +
+#   ylab("Percent tree cover") + xlab("Contains monitor?") +
+#   simple_theme
+# plot(tree_cov_d)
+# 
+# ks.test(grid_all_df$tree_cover, grid_mon_df$tree_cover)
+```
+
+#### Percent impervious surfaces
+```{r}
+ggplot() +
+  geom_density(data=grid_all_df, aes(x=impervious, fill="all")) + 
+  geom_density(data=grid_cm_df, aes(x=impervious, fill="mon"),
+               alpha=0.75) + 
+  geom_density(data=grid_hs_df, aes(x=impervious, fill="hs"),
+               alpha=0.5) + 
+  geom_density(data=grid_hs_new_df, aes(x=impervious, fill="hs_new"),
+               alpha=0.25) + 
+  scale_fill_manual(name="Distribution",
+                    values = c("all" = "red", "mon" = "blue", "hs"="green", "hs_new" = "orange"),
+                    labels = c("all" = "All grid cells", "mon" = "Monitor grid cells",
+                               "hs" = "Enrolled participants", "hs_new" = "Participants to contact")) +
+  xlab("Percent Impervious Surfaces") +
+  simple_theme
+
+# imp_d <- ggplot(data=grid_all_df) +
+#   geom_dotplot(aes(x = factor(grid_all_df$mon),
+#                    y = grid_all_df$impervious, 
+#                    fill=factor(grid_all_df$mon)),
+#                binaxis = "y", method="histodot",
+#                stackdir = "center", binpositions = "all") +
+#   scale_fill_manual(name="Distribution",
+#                     values = c("0" = "red", "1" = "blue"),
+#                     labels = c("All grid cells", "Monitor grid cells")) +
+#   ylab("Percent impervious surfaces") + xlab("Contains monitor?") +
+#   simple_theme
+# plot(imp_d)
+# 
+# ks.test(grid_all_df$impervious, grid_mon_df$impervious)
+```
+
+<!-- #### Highways -->
+<!-- ```{r} -->
+<!-- high_den <- ggplot() + -->
+<!--   geom_density(data=grid_all_df, aes(grid_all_df$highway_km, fill="all")) +  -->
+<!--   geom_density(data=grid_mon_df, aes(grid_mon_df$highway_km, fill="mon"),  -->
+<!--                alpha=0.5) +  -->
+<!--   scale_fill_manual(name="Distribution", -->
+<!--                     values = c("all" = "red", "mon" = "blue"), -->
+<!--                     labels = c("All grid cells", "Monitor grid cells")) + -->
+<!--   xlab("Highway density (km)") + -->
+<!--   simple_theme -->
+<!-- plot(high_den) -->
+
+<!-- high_d <- ggplot(data=grid_all_df) + -->
+<!--   geom_dotplot(aes(x = factor(grid_all_df$mon), -->
+<!--                    y = grid_all_df$highway_km,  -->
+<!--                    fill=factor(grid_all_df$mon)), -->
+<!--                binaxis = "y", method="histodot", -->
+<!--                stackdir = "center", binpositions = "all") + -->
+<!--   scale_fill_manual(name="Distribution", -->
+<!--                     values = c("0" = "red", "1" = "blue"), -->
+<!--                     labels = c("All grid cells", "Monitor grid cells")) + -->
+<!--   ylab("Highway density (km)") + xlab("Contains monitor?") + -->
+<!--   simple_theme -->
+<!-- plot(high_d) -->
+
+<!-- ks.test(grid_all_df$highway_km, grid_mon_df$highway_km) -->
+<!-- ``` -->
+
+<!-- #### Major roads -->
+<!-- ```{r} -->
+<!-- maj_den <- ggplot() + -->
+<!--   geom_density(data=grid_all_df, aes(grid_all_df$major_km, fill="all")) +  -->
+<!--   geom_density(data=grid_mon_df, aes(grid_mon_df$major_km, fill="mon"),  -->
+<!--                alpha=0.5) +  -->
+<!--   scale_fill_manual(name="Distribution", -->
+<!--                     values = c("all" = "red", "mon" = "blue"), -->
+<!--                     labels = c("All grid cells", "Monitor grid cells")) + -->
+<!--   xlab("Major road density (km)") + -->
+<!--   simple_theme -->
+<!-- plot(maj_den) -->
+
+<!-- maj_d <- ggplot(data=grid_all_df) + -->
+<!--   geom_dotplot(aes(x = factor(grid_all_df$mon), -->
+<!--                    y = grid_all_df$major_km,  -->
+<!--                    fill=factor(grid_all_df$mon)), -->
+<!--                binaxis = "y", method="histodot", -->
+<!--                stackdir = "center", binpositions = "all") + -->
+<!--   scale_fill_manual(name="Distribution", -->
+<!--                     values = c("0" = "red", "1" = "blue"), -->
+<!--                     labels = c("All grid cells", "Monitor grid cells")) + -->
+<!--   ylab("Major road denisty (km)") + xlab("Contains monitor?") + -->
+<!--   simple_theme -->
+<!-- plot(maj_d) -->
+
+<!-- ks.test(grid_all_df$major_km, grid_mon_df$major_km) -->
+<!-- ``` -->
+
+#### AADT
+```{r}
+ggplot() +
+  geom_density(data=grid_all_df, aes(x=aadt, fill="all")) + 
+  geom_density(data=grid_cm_df, aes(x=aadt, fill="mon"),
+               alpha=0.75) + 
+  geom_density(data=grid_hs_df, aes(x=aadt, fill="hs"),
+               alpha=0.5) + 
+  geom_density(data=grid_hs_new_df, aes(x=aadt, fill="hs_new"),
+               alpha=0.25) + 
+  scale_fill_manual(name="Distribution",
+                    values = c("all" = "red", "mon" = "blue", "hs"="green", "hs_new" = "orange"),
+                    labels = c("all" = "All grid cells", "mon" = "Monitor grid cells",
+                               "hs" = "Enrolled participants", "hs_new" = "Participants to contact")) +
+  xlab("AADT") +
+  simple_theme
+
+# aadt_d <- ggplot(data=grid_all_df) +
+#   geom_dotplot(aes(x = factor(grid_all_df$mon),
+#                    y = grid_all_df$aadt, 
+#                    fill=factor(grid_all_df$mon)),
+#                binaxis = "y", method="histodot",
+#                stackdir = "center", binpositions = "all") +
+#   scale_fill_manual(name="Distribution",
+#                     values = c("0" = "red", "1" = "blue"),
+#                     labels = c("All grid cells", "Monitor grid cells")) +
+#   ylab("AADT (from NHPMS") + xlab("Contains monitor?") +
+#   simple_theme
+# plot(aadt_d)
+# 
+# ks.test(grid_all_df$aadt, grid_mon_df$aadt)
+```
+
+#### Populaton density
+```{r}
+ggplot() +
+  geom_density(data=grid_all_df, aes(x=pop_den, fill="all")) + 
+  geom_density(data=grid_cm_df, aes(x=pop_den, fill="mon"),
+               alpha=0.75) + 
+  geom_density(data=grid_hs_df, aes(x=pop_den, fill="hs"),
+               alpha=0.5) + 
+  geom_density(data=grid_hs_new_df, aes(x=pop_den, fill="hs_new"),
+               alpha=0.25) + 
+  scale_fill_manual(name="Distribution",
+                    values = c("all" = "red", "mon" = "blue", "hs"="green", "hs_new" = "orange"),
+                    labels = c("all" = "All grid cells", "mon" = "Monitor grid cells",
+                               "hs" = "Enrolled participants", "hs_new" = "Participants to contact")) +
+  xlab("Population Density") +
+  simple_theme
+
+# pop_d <- ggplot(data=grid_all_df) +
+#   geom_dotplot(aes(x = factor(grid_all_df$mon),
+#                    y = grid_all_df$pop_den, 
+#                    fill=factor(grid_all_df$mon)),
+#                binaxis = "y", method="histodot",
+#                stackdir = "center", binpositions = "all") +
+#   scale_fill_manual(name="Distribution",
+#                     values = c("0" = "red", "1" = "blue"),
+#                     labels = c("All grid cells", "Monitor grid cells")) +
+#   ylab("Population density (persons per sq km)") + xlab("Contains monitor?") +
+#   simple_theme
+# plot(pop_d)
+# 
+# ks.test(grid_all_df$pop_den, grid_mon_df$pop_den)
+```
+
+#### Housing density
+```{r}
+ggplot() +
+  geom_density(data=grid_all_df, aes(x=housing_den, fill="all")) + 
+  geom_density(data=grid_cm_df, aes(x=housing_den, fill="mon"),
+               alpha=0.75) + 
+  geom_density(data=grid_hs_df, aes(x=housing_den, fill="hs"),
+               alpha=0.5) + 
+  geom_density(data=grid_hs_new_df, aes(x=housing_den, fill="hs_new"),
+               alpha=0.25) + 
+  scale_fill_manual(name="Distribution",
+                    values = c("all" = "red", "mon" = "blue", "hs"="green", "hs_new" = "orange"),
+                    labels = c("all" = "All grid cells", "mon" = "Monitor grid cells",
+                               "hs" = "Enrolled participants", "hs_new" = "Participants to contact")) +
+  xlab("Housing Density") +
+  simple_theme
+
+# housing_d <- ggplot(data=grid_all_df) +
+#   geom_dotplot(aes(x = factor(grid_all_df$mon),
+#                    y = grid_all_df$housing_den, 
+#                    fill=factor(grid_all_df$mon)),
+#                binaxis = "y", method="histodot",
+#                stackdir = "center", binpositions = "all") +
+#   scale_fill_manual(name="Distribution",
+#                     values = c("0" = "red", "1" = "blue"),
+#                     labels = c("All grid cells", "Monitor grid cells")) +
+#   ylab("Housing density (units per sq km)") + xlab("Contains monitor?") +
+#   simple_theme
+# plot(housing_d)
+# 
+# ks.test(grid_all_df$housing_den, grid_mon_df$housing_den)
+# 
+# #' SFH density
+# single_den <- ggplot() +
+#   geom_density(data=grid_all_df, aes(grid_all_df$single_den, fill="all")) + 
+#   geom_density(data=grid_mon_df, aes(grid_mon_df$single_den, fill="mon"),
+#                alpha=0.5) + 
+#   scale_fill_manual(name="Distribution",
+#                     values = c("all" = "red", "mon" = "blue"),
+#                     labels = c("All grid cells", "Monitor grid cells")) +
+#   xlab("Single-family housing density (n per sq km)") +
+#   simple_theme
+# plot(single_den)
+# 
+# single_d <- ggplot(data=grid_all_df) +
+#   geom_dotplot(aes(x = factor(grid_all_df$mon),
+#                    y = grid_all_df$single_den, 
+#                    fill=factor(grid_all_df$mon)),
+#                binaxis = "y", method="histodot",
+#                stackdir = "center", binpositions = "all") +
+#   scale_fill_manual(name="Distribution",
+#                     values = c("0" = "red", "1" = "blue"),
+#                     labels = c("All grid cells", "Monitor grid cells")) +
+#   ylab("Single-family housing density (units per sq km)") + 
+#   xlab("Contains monitor?") +
+#   simple_theme
+# plot(single_d)
+# 
+# ks.test(grid_all_df$single_den, grid_mon_df$single_den)
+# 
+# #' MFH density
+# multi_den <- ggplot() +
+#   geom_density(data=grid_all_df, aes(grid_all_df$multi_den, fill="all")) + 
+#   geom_density(data=grid_mon_df, aes(grid_mon_df$multi_den, fill="mon"),
+#                alpha=0.5) + 
+#   scale_fill_manual(name="Distribution",
+#                     values = c("all" = "red", "mon" = "blue"),
+#                     labels = c("All grid cells", "Monitor grid cells")) +
+#   xlab("Multi-family housing density (n per sq km)") +
+#   simple_theme
+# plot(multi_den)
+# 
+# multi_d <- ggplot(data=grid_all_df) +
+#   geom_dotplot(aes(x = factor(grid_all_df$mon),
+#                    y = grid_all_df$multi_den, 
+#                    fill=factor(grid_all_df$mon)),
+#                binaxis = "y", method="histodot",
+#                stackdir = "center", binpositions = "all") +
+#   scale_fill_manual(name="Distribution",
+#                     values = c("0" = "red", "1" = "blue"),
+#                     labels = c("All grid cells", "Monitor grid cells")) +
+#   ylab("Multi-family housing density (units per sq km)") + 
+#   xlab("Contains monitor?") +
+#   simple_theme
+# plot(multi_d)
+# 
+# ks.test(grid_all_df$multi_den, grid_mon_df$multi_den)
+# 
+# #' Mobile home denisty
+# mobile_den <- ggplot() +
+#   geom_density(data=grid_all_df, aes(grid_all_df$mobile_den, fill="all")) + 
+#   geom_density(data=grid_mon_df, aes(grid_mon_df$mobile_den, fill="mon"),
+#                alpha=0.5) + 
+#   scale_fill_manual(name="Distribution",
+#                     values = c("all" = "red", "mon" = "blue"),
+#                     labels = c("All grid cells", "Monitor grid cells")) +
+#   xlab("Mobile housing density (n per sq km)") +
+#   simple_theme
+# plot(mobile_den)
+# 
+# mobile_d <- ggplot(data=grid_all_df) +
+#   geom_dotplot(aes(x = factor(grid_all_df$mon),
+#                    y = grid_all_df$mobile_den, 
+#                    fill=factor(grid_all_df$mon)),
+#                binaxis = "y", method="histodot",
+#                stackdir = "center", binpositions = "all") +
+#   scale_fill_manual(name="Distribution",
+#                     values = c("0" = "red", "1" = "blue"),
+#                     labels = c("All grid cells", "Monitor grid cells")) +
+#   ylab("Mobile housing density (units per sq km)") + 
+#   xlab("Contains monitor?") +
+#   simple_theme
+# plot(housing_d)
+# 
+# ks.test(grid_all_df$mobile_den, grid_mon_df$mobile_den)
+```
+
+<!-- ### Summary of land cover classification across the study area (30 m raster) -->
+<!-- ```{r} -->
+<!-- load("./Processed_Data/land_use.RData") -->
+<!-- plot(land_use) -->
+
+<!-- # library(jpeg) -->
+<!-- # knitr::include_graphics("./Raw_Data/CONUSAnalytical_2_8_16/Analytical/NLCD_Colour_Classification_Update.jpg") -->
+<!-- ``` -->
+
+<!-- ``` {r results="asis"} -->
+<!-- f_tab <- as.data.frame(freq(land_use)) -->
+<!-- f_tab$category <- c("Open Water",  -->
+<!--                     "Developed: Open space", "Developed: Low intensity", -->
+<!--                     "Developed: Medium intensity", "Developed: High intensity", -->
+<!--                     "Barren land", "Decidious forest", "Evergreen forest", -->
+<!--                     "Mixed forest", "Shrub/scrub", "Grasslands", "Pasture", -->
+<!--                     "Cultivated crops", "Woody wetlands", "Emergent wetlands")  -->
+<!-- f_tab$pct_area <- round(f_tab$count / sum(f_tab$count) * 100, 2) -->
+<!-- kable(f_tab, caption="Grid cell area by land cover classification", row.names = F) -->
+<!-- ``` -->
+
+### Comparing land use for HS and non-HS grid cells
+Each 250 m grid cell is assinged the most frequent land use category from the
+30 m land cover dataset (NLCD)
+
+``` {r results="asis"}
+t_tab <- st_set_geometry(grid_all_df, NULL) %>%
+  count(land_use, mon) %>%
+  spread(key = mon, value = n, fill=0)
+colnames(t_tab) <- c("land_use", "Other_n", "Mon_n")
+
+t_tab <- t_tab %>%
+  mutate(Other_pct = round((Other_n / sum(Other_n)) * 100, 2),
+         Mon_pct = round((Mon_n / sum(Mon_n)) * 100, 2))
+kable(t_tab, caption="Grid cell land cover classification for monitor cells and other cells", 
+      row.names = F)
+```
+
+### Selecting parks for community monitors
+
+Comparing the distributions of attributes for all cells and HS participant cells 
+suggests that we need to place the community monitors in two different 
+types of areas: one with with lower population density and lower impervious surfaces
+and one with higher intensity development AADT.
+
+I've tried to consider two additional criteria here:
+1) The distance the field team will have to drive
+2) The existance of infrastructure to mount the monitor onto
+
+It looks like we're still over-representing the "low intensity development" areas,
+but I think that's a result of placing half our monitors at homes.
+
+###Potenital community monitor locations
+```{r results="asis"}
+kable(mon[,c(1:2,6:7)],
+      caption="Possible park locations for community monitors", row.names = F)
+```

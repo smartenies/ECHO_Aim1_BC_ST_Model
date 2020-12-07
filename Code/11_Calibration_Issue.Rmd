@@ -1,0 +1,874 @@
+---
+title: "UPAS Data Calibration Issue"
+author: "Sheena Martenies"
+date: "10/22/2019"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE, echo = F}
+knitr::opts_chunk$set(echo = F)
+
+library(sf)
+library(raster)
+library(ggplot2)
+library(ggmap)
+library(ggsn)
+library(ggthemes)
+library(ggspatial)
+library(ggpubr)
+library(viridis)
+library(stringr)
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(knitr)
+library(scales)
+library(jsonlite)
+
+#' For ggplots
+simple_theme <- theme(
+  #aspect.ratio = 1,
+  text  = element_text(family="Calibri",size = 12, color = 'black'),
+  panel.spacing.y = unit(0,"cm"),
+  panel.spacing.x = unit(0.25, "lines"),
+  panel.grid.minor = element_line(color = "transparent"),
+  panel.grid.major = element_line(color = "transparent"),
+  panel.border=element_rect(fill = NA),
+  panel.background=element_blank(),
+  axis.ticks = element_line(colour = "black"),
+  axis.text = element_text(color = "black", size=10),
+  # legend.position = c(0.1,0.1),
+  plot.margin=grid::unit(c(0,0,0,0), "mm"),
+  legend.key = element_blank()
+)
+windowsFonts(Calibri=windowsFont("TT Calibri"))
+options(scipen = 9999) #avoid scientific notation
+
+albers <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
+ll_nad83 <- "+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0"
+ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+```
+
+# Overview
+
+Our LUR sampling scheme involved collocated sampling at three EPA monitoring sites in the Denver metropolitan area. Two of these sites (Globeville and National Jewish) only have PM~2.5~ monitoring data. However, the near-road monitoring site at I-25 has both PM2.5 and black carbon. 
+
+I've been using the monitoring data from the I-25 site to fit a calibration curve (regression model) for the UPAS PM~2.5~ and BC data. The PM~2.5~ calibration model was decent, whereas the calibration curve for BC (using only the UPAS measurement to predict the monitor measurement) was terrible. I also fit calibration models for PM~2.5~ using data from the Globeville and National Jewish sites. These models performed similarly to the I-25 site model
+
+The regression model fit for the BC data across all campaigns was pretty poor. There didn't appear to be any correlation between the monitor data and the UPAS data. However, once the data were stratified by campaign, there were some obvious relationships. For some reason, the UPAS monitors performed differently based on the campaign. Notably, there was a negative relationship for the winter data. Christian L'Orange (Powerhouse) proposed a couple possibilities. First, ambient temperature might be an issue (e.g., there may be discrepancies between the actual sampled volume and the recorded sampling volume due to differences in density at cold temperature or the UPAS might have been prone to leaks). Second, differences in aerosol composition could also be an issue-- there is a delay between sample collection and the SootScan, and more volatile oragnics that absorb light at 880 nm could have been measured by the aethalometer and not by the SootScan. Importantly, the PM2.5 data doesn't seem to have this seasonal variability in UPAS vs. EPA monitor data, so temperature is less likely. Shantanu Jathar (CSU Mechanical Engineering) favored the "differences in aerosol composition" hypothesis, though it's difficult to examine with the data we have.
+
+One option  address this fit issue was to fit separate calibration curves for each campaign. However, we did not have collocated data for Campaign 1 (late spring/summer) because we weren't able to arrange access to the I-25 site before the summer. Separate seasonal models will require us to figure out which curve works best for the Campaign 1 data.
+
+I attempted to fit multivariate models with indicators for campaign and temperature, and was able to get a regression that explained >60% of the variability in filter-based BC concentrations, but using this model to adjust the filter BC concentrations didn't work. BUT! It provided evidence that season-specific models were most appropriate.
+
+Sheryl and I met with some resarchers at CSU (Shantanu Jathar, Ellison Carter, John Volckens, Ander Wilson, and Christian L'Orange) to talk about the issues we were having with the UPAS data. Some suggestions from this meeting included:
+
+- Using Deming (orthogonal) regression to fit a curve for the BC data due to errors in both the SootScan and the aethalometer. JV recommended we assume equal variances in the errors.
+- Looking at trends in the metals data (i.e., S, K, and Fe) from the nearby CSN site (not a co-location site) to see if there are similar trends (i.e., lower levels in the winter) that might corroborate our BC time trends
+
+The rest of this document walks through what we ended up doing to adjust the UPAS data. Ultimately I used both linear regression and deming regression to calibrate the filter-based PM~2.5~ and BC concentrations.  
+
+One outstanding issue will be to identify __why__ there were differences by campaign. This might require some further investigation. We might want to have the UPAS checked out (e.g., check for leaks, check to see if the flow is still calibrated correctly, etc.). Some possibilities could be differences in aerosol composition that affected BC measurements (e.g., EPA measurements are near direct read, whereas our filter-based methods are integrated and there is a long delay between sample collection and measurement); interference from metals; and issues with the UPAS in cold weather. I plotted some of the UPAS parameters and didn't see any obvious differences, aside some some issues at the end of one of the sampling runs for the first week of Campaign 4 (mass flow and volumetric flow rate drop off that the end of the run).
+
+Update: We currently have UPAS co-locating with the CSN site in Denver. Perhaps this dataset will shed some light on the seasonal issues we are seeing in our data.
+
+# PM~2.5~ Calibration
+
+First, we identified all of the UPAS filters co-located with the I-25 monitor. Over the course of the four sampling campaigns, we had 56 filters co-located with the three PM~2.5~ monitors (17 at the I-25 site). The raw PM~2.5~ time-weighted average concentrations from the UPAS filters at the I-25 site averaged 8.5 $\mu$g/m$^3$ and had a range of 2.3 to 18.0 $\mu$g/m$^3$.
+
+```{r, include = F}
+filter_data <- read_csv(here::here("Data", "Filter_PM.csv")) %>% 
+  filter(!is.na(EndDateLocal)) %>% 
+  arrange(EndDateLocal) 
+monitor_data <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv"))
+monitor_temp <- read_csv(here::here("Data", "Monitor_TEMP_Data_AEA.csv"))
+monitor_rh <- read_csv(here::here("Data", "Monitor_RH_DP_Data_AEA.csv"))
+monitor_wind <- read_csv(here::here("Data", "Monitor_WIND_Data_AEA.csv"))
+
+
+collocated_ids <- read_csv(here::here("Data", "Collocation_Filter_IDs.csv"))
+
+#' Collocated monitors:
+#' National Jewish (080310013) 1400 Jackson St, Denver, CO 80206: PM2.5
+#' I-25 Denver (080310027) 9th and Yuma: PM2.5, Black Carbon, Temp
+#' I-25 Globeville (080310028) 49th and Acoma: PM2.5, Temp, RH, Wind
+
+collocated_ids <- collocated_ids %>% 
+  mutate(monitor_id = ifelse(Location == "1400 Jackson St, Denver, CO 80206", "080310013",
+                             ifelse(Location == "9th and Yuma", "080310027",
+                                    "080310028")))
+
+cal_data <- filter(filter_data, filter_id %in% collocated_ids$filter_id) %>% 
+  dplyr::select(filter_id, StartDateTimeLocal, EndDateTimeLocal, month, is_blank, 
+         below_lod, pm_ug_m3, campaign) %>% 
+  left_join(collocated_ids, by = "filter_id") %>% 
+  filter(is_blank == 0) %>% 
+  filter(!is.na(pm_ug_m3))
+
+i_25_cal_data <- filter(cal_data, monitor_id == "080310027")
+
+```
+
+Summary of the raw PM~2.5~ measurements at the I-25 UPAS monitors:
+```{r pm_upas, echo = FALSE}
+summary(i_25_cal_data$pm_ug_m3)
+```
+
+Temporal trends for the UPAS filter results were as expected. Concentrations were highest in the winter (Campaign 4) and summer (Campaign 2) due to increases in biomass burning and lower in the spring and fall (Campaigns 1 and 3, respectively). On average, concentrations were higher at the I-25 and Globeville sites compared to the National Jewish site. This result was expected, as the I-25 and Globeville sites are near major highways.
+
+```{r, out.width='75%', fig.align='center', fig.cap='Figure 1. UPAS PM~2.5~ Time series'}
+knitr::include_graphics(here::here("Figs/Calibration", "PM_UPAS_TS.jpeg"))
+```
+
+The EPA monitoring data showed similar patterns to the UPAS filter data time series. There was a spike in PM~2.5~ in September of 2018, likely due to nearby wildfires.
+
+```{r, out.width='75%', fig.align='center', fig.cap='Figure 2. UPAS PM~2.5~ Time series'}
+knitr::include_graphics(here::here("Figs/Calibration", "PM_Monitor_TS.jpeg"))
+```
+
+We used each monitor in a separate simple linear regression model to identify the best fit to calibrate the full UPAS filter data set. Overall, there was modest agreement between the UPAS and EPA monitor results. The best overall fit was for the I-25 monitor. Diagnostic plots showed that the linear model fit reasonably well and was appropriate.
+
+```{r pm_cal, echo = F}
+#' Assign start and end PM2.5 concentrations from the monitoring data
+for (i in 1:nrow(cal_data)) {
+  df <- slice(cal_data, i)
+  
+  if(is.na(df$StartDateTimeLocal[1])) next
+  
+  #' Which monitor is collocated
+  paired_monitor_id <- df$monitor_id[1]
+  
+  #' What are the start and end dates for this filter
+  start_date <- df$StartDateTimeLocal[1]
+  end_date <- df$EndDateTimeLocal[1]
+  
+  dates <- seq.Date(from = start_date, to = end_date, by = "day")
+  
+  #' Get mean concentration from the monitor for the period covered by the filter
+  mon <- monitor_data %>% 
+    filter(monitor_id == paired_monitor_id) %>% 
+    filter(Date_Local %in% dates)
+  
+  mean_pol <- mean(mon$Arithmetic_Mean, na.rm=T)
+  
+  cal_data[i, "monitor_mean"] <- mean_pol
+  cal_data[i, "monitor_mean_n_obs"] <- nrow(mon)
+}
+
+#' NATIONAL JEWISH: R2 = 0.21
+njh_lm <- lm(pm_ug_m3 ~ monitor_mean,
+             data = filter(cal_data, monitor_id == "080310013"))
+
+#' I25-Denver: R2 = 0.61
+i25_lm <- lm(pm_ug_m3 ~ monitor_mean,
+             data = filter(cal_data, monitor_id == "080310027"))
+
+#' GLOBEVILLE: R2 = 0.53
+globe_lm <- lm(pm_ug_m3 ~ monitor_mean,
+               data = filter(cal_data, monitor_id == "080310028"))
+```
+
+```{r, out.width='75%', fig.align='center', fig.cap='Figure 3. Scatter plots for PM2.5 (UPAS vs EPA)'}
+knitr::include_graphics(here::here("Figs/Calibration", "PM_Cal_Curves.jpeg"))
+```
+
+The diagnostic plots for the linear regression model using data for the I-25 siteshowed that the model fit reasonably well.
+
+```{r, echo = F} 
+summary(i25_lm)
+par(mfrow=c(2,2))
+plot(i25_lm)
+par(mfrow=c(1,1))
+```
+
+We used the linear regression model based on the I-25 monitoring data to calibrate the remaining filters. We then used box plots to compare raw and calibrated UPAS PM~2.5~ results to all EPA monitors in Adams, Arapaho, and Denver counties. These plots are shown below. Overall, there appears to be reasonable agreement between the calibrated UPAS data and general trends across the region.
+
+```{r, out.width='75%', fig.align='center', fig.cap='Figure 4. Box plots of PM~2.5~ by month'}
+knitr::include_graphics(here::here("Figs/Calibration", "Monthly_Means_PM.jpeg"))
+```
+
+```{r, out.width='75%', fig.align='center', fig.cap='Figure 5. Box plots of PM~2.5~ by season'}
+knitr::include_graphics(here::here("Figs/Calibration", "Seasonal_Means_PM.jpeg"))
+```
+
+# BC Calibration
+
+The BC calibration process was originally less successful than the PM~2.5~ calibration. Again, we are using aethalometer data from the I-25 site because that is the only location in the Denver area with available data. UPAS BC results were similar whether blank-corrected or not, so we elected to use the blank-corrected BC concentrations. (Note: Only Campaign 1 needed to be blank corrected-- see 00_Analysis_Notes). Raw UPAS BC concentrations averaged 3.2 $\mu$g/m^3^ and ranged from 0.3 to 5.8 $\mu$g/m^3^. 
+
+```{r, include = F}
+filter_data <- read_csv(here::here("Data", "Filter_BC.csv")) %>% 
+  filter(!is.na(EndDateLocal)) %>% 
+  arrange(EndDateLocal)
+monitor_data <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv"))
+
+collocated_ids <- read_csv(here::here("Data", "Collocation_Filter_IDs.csv"))
+
+#' Collocated monitors:
+#' National Jewish (080310013) 1400 Jackson St, Denver, CO 80206: PM2.5
+#' I-25 Denver (080310027) 9th and Yuma: PM2.5, Black Carbon, Temp
+#' I-25 Globeville (080310028) 49th and Acoma: PM2.5, Temp, RH, Wind
+collocated_ids <- collocated_ids %>% 
+  mutate(monitor_id = ifelse(Location == "1400 Jackson St, Denver, CO 80206", "080310013",
+                             ifelse(Location == "9th and Yuma", "080310027",
+                                    "080310028"))) %>% 
+  filter(monitor_id == "080310027")
+
+cal_data <- filter(filter_data, filter_id %in% collocated_ids$filter_id) %>% 
+  dplyr::select(filter_id, StartDateTimeLocal, EndDateTimeLocal, is_blank, 
+         bc_ug_m3, bc_ug_m3_uncorrected, campaign, UPAS) %>% 
+  left_join(collocated_ids, by = "filter_id") %>% 
+  filter(is_blank == 0) %>% 
+  filter(!is.na(bc_ug_m3)) %>% 
+  filter(filter_id %in% collocated_ids$filter_id)
+
+collocated_upas <- unique(cal_data$UPAS)
+
+```
+
+## Time Series- UPAS
+Unlike the PM2.5 data at this site, temporal trends for the UPAS filter concentrations were unexpected. Our UPAS data showed declining BC concentrations at the I-25 site, with the lowest concentrations occurring in the winter. The time-series plot suggested that there may be differences in how BC was measured by campaign. 
+
+```{r, out.width='75%', fig.align='center', fig.cap='Figure 6. UPAS BC Time series'}
+knitr::include_graphics(here::here("Figs/Calibration", "BC_UPAS_TS.jpeg"))
+```
+
+## Time Series- EPA Monitor
+The EPA monitoring data were also highly variable, but the I-25 site showed lower concentrations in the spring and level concentrations across the summer, fall, and winter seasons, likely attributable to consistent traffic and the influence of biomass burning in the summer and winter.
+
+```{r, out.width='75%', fig.align='center', fig.cap='Figure 7. UPAS BC Time series'}
+knitr::include_graphics(here::here("Figs/Calibration", "BC_Monitor_TS.jpeg"))
+```
+
+## Comparing EPA Data to CDPHE Data
+To be thorough, I wanted to compare the CDPHE BC data for the campaign periods to the EPA campaign periods to see if there was a difference how CDPHE processed their data. Comparisons between the raw CDPHE data received from Brad Rink and the BC data from the EPA website suggested near perfect agreement, so there was no issue using the EPA data.
+
+I've reached out to Brad re: the maintenance and operation of the AE33 at the I-25 site. The (AE33 user manual)[ftp://aftp.cmdl.noaa.gov/aerosol/doc/inst/aeth/ae33_sop_20161227.pdf] states that the sigma value is 7.77 m^2^/g, which is multiplied by a multiple scattering parameter C = 1.57. The value I have for sigma in the spreadsheets from Christian is 4.2 $\mu$g/cm^2^, with a standard area of 7.065 cm^2^. 
+
+```{r, include = F}
+epa_bc_16 <- read_csv("R:/RSTOR-Magzamen/Research/Secondary_Data/EPA_Air_Quality_System_Data/daily_SPEC_2016.csv")
+colnames(epa_bc_16) <- gsub(" ", "_", colnames(epa_bc_16))
+
+epa_bc_17 <- read_csv("R:/RSTOR-Magzamen/Research/Secondary_Data/EPA_Air_Quality_System_Data/daily_SPEC_2017.csv")
+colnames(epa_bc_17) <- gsub(" ", "_", colnames(epa_bc_17))
+
+epa_bc_18 <- read_csv("R:/RSTOR-Magzamen/Research/Secondary_Data/EPA_Air_Quality_System_Data/daily_SPEC_2018.csv")
+colnames(epa_bc_18) <- gsub(" ", "_", colnames(epa_bc_18))
+
+epa_bc_19 <- read_csv("R:/RSTOR-Magzamen/Research/Secondary_Data/EPA_Air_Quality_System_Data/daily_SPEC_2019.csv")
+colnames(epa_bc_19) <- gsub(" ", "_", colnames(epa_bc_19))
+
+pol <- 88313
+epa_bc <- bind_rows(epa_bc_16, epa_bc_17, epa_bc_18, epa_bc_19) %>% 
+  filter(State_Code == "08") %>% 
+  #' Just want to save the BC (880 nm) measurements
+  filter(Parameter_Code == pol) %>% 
+  mutate(County_Code = str_pad(County_Code, width = 3, side = "left", pad = "0"),
+         Site_Num = str_pad(Site_Num, width = 4, side = "left", pad = "0")) %>% 
+  mutate(monitor_id = paste0(State_Code, County_Code, Site_Num)) %>% 
+  rename(Max_Value = "1st_Max_Value",
+         epa_bc = "Arithmetic_Mean")
+
+cdphe_bc <- read_csv(here::here("Data/CDPHE_Aeth_Data", "Yuma_St_Aeth_Combined.csv")) %>% 
+  mutate(Samp_date = as.Date(Samp_date, format = "%m/%d/%Y")) %>% 
+  filter(Samp_date %in% seq.Date(as.Date("1/1/2018", format = "%m/%d/%Y"), 
+                                 as.Date("12/31/2019", format = "%m/%d/%Y"), 
+                                 by = "day")) %>% 
+  rename(cdphe_bc = BC_880_nm, Date_Local = Samp_date) %>% 
+  group_by(Date_Local) %>% 
+  summarize(cdphe_bc = mean(cdphe_bc, na.rm=T))
+
+bc_compare <- dplyr::select(epa_bc, Date_Local, epa_bc) %>% 
+  left_join(cdphe_bc, by = "Date_Local")
+```
+
+Scatter plot of CDPHE vs. EPA suggests near perfect agreement.
+```{r, echo = F, warning = F, out.width='75%', fig.align='center', fig.cap='Figure 8. Scatterplot of CDPHE vs. EPA data'}
+ggplot(bc_compare, aes(x = cdphe_bc, y = epa_bc)) +
+  geom_point() +
+  geom_abline(aes(slope = 1, intercept = 0)) +
+  xlab("CDPHE BC (\u03bcg/m\u00b3)") + ylab("EPA BC (\u03bcg/m\u00b3)") +
+  simple_theme
+```
+
+Time series plots for CDPHE and EPA also suggest that agreement between the two data sets is high.
+```{r, echo = F, warning = F, out.width='75%', fig.align='center', fig.cap='Figure 8. Time series of CDPHE and EPA BC data'}
+ggplot(bc_compare) +
+  geom_line(aes(x = Date_Local, y = cdphe_bc, color = "cdphe")) +
+  geom_line(aes(x = Date_Local, y = epa_bc, color = "epa")) +
+  geom_smooth(aes(x = Date_Local, y = cdphe_bc, color = "cdphe"), method = "loess") +
+  geom_smooth(aes(x = Date_Local, y = epa_bc, color = "epa"), method = "loess") +
+  scale_color_viridis(name = "Agency", discrete = T,
+                      labels = c("cdphe" = "CDPHE", "epa" = "EPA")) +
+  xlab("Sampling Date") + ylab("BC (\u03bcg/m\u00b3)") +
+  simple_theme
+```
+
+## Metals
+
+### Sulfur/Potassium Ratios
+Christian suggested that there might be differences in the metals and/or differences in aerosols sampled across seasons that could interfere with the transmissometry data. A quick summary of the S and K concentrations and the S/K ratios measured for the filters suggests that the black carbon at this site is primarily from traffic (all ratios are above 1, but the ratio varies with time). S is associated with fossil fuel combustion, whereas K is more strongly linked to biomass burning. The S/K ratio averages 3.4, but ranges from 1.4 to 8.6 (IQR = 2.5). A time series plot suggests that S/K ratios for this near-road monitor are highest in the winter.
+```{r, include = F, echo = F} 
+filter_data_metals <- read_csv(here::here("Data", "Filter_Metals.csv")) %>% 
+  filter(filter_id %in% collocated_ids$filter_id) %>% 
+  mutate(s_k_ratio = S_ug_m3 / K_ug_m3)
+summary(filter_data_metals$s_k_ratio)
+
+cal_data_metals <- dplyr::select(cal_data, filter_id, campaign, StartDateTimeLocal) %>% 
+  left_join(filter_data_metals, by = c("filter_id", "campaign"))
+```
+
+
+```{r, echo = F, out.width='75%', fig.align='center', fig.cap='Figure 9. S/K ratios for I-25 site filters'}
+ggplot(cal_data_metals) +
+  geom_line(aes(x = StartDateTimeLocal, y = S_ug_m3, color = campaign)) +
+  geom_smooth(aes(x = StartDateTimeLocal, y = S_ug_m3), method = "loess") +
+  xlab("Sampling Date") + ylab("S (ug/m3)") +
+  scale_color_viridis(name = "Campaign", discrete = T) +
+  scale_x_date(labels = date_format("%m-%Y")) +
+  simple_theme
+
+ggplot(cal_data_metals) +
+  geom_line(aes(x = StartDateTimeLocal, y = K_ug_m3, color = campaign)) +
+  geom_smooth(aes(x = StartDateTimeLocal, y = K_ug_m3), method = "loess") +
+  xlab("Sampling Date") + ylab("K (ug/m3)") +
+  scale_color_viridis(name = "Campaign", discrete = T) +
+  scale_x_date(labels = date_format("%m-%Y")) +
+  simple_theme
+
+ggplot(cal_data_metals) +
+  geom_line(aes(x = StartDateTimeLocal, y = s_k_ratio, color = campaign)) +
+  geom_smooth(aes(x = StartDateTimeLocal, y = s_k_ratio), method = "loess") +
+  xlab("Sampling Date") + ylab("S/K Ratio") +
+  scale_color_viridis(name = "Campaign", discrete = T) +
+  scale_x_date(labels = date_format("%m-%Y")) +
+  simple_theme
+
+ggsave(here::here("Figs/Calibration", "S_K_Ratios_Yuma_St_Filters.jpeg"),
+       height = 5, width = 7, dpi = 500, units = "in", device = "jpeg")
+```
+
+The Yuma St. monitor doesn't report metals data, but the Navajo St. site (3.3 miles away from the Yuma St. site) does. The S and K concentrations and S/K ratios are plotted below. S/K ratio at this site averages 2.6 and ranges from 0 to 26.8 (IQR = 3.3). These ratios also show a bit of an uptick during the winter of 2019, but this is not a near-road site.
+
+```{r, include = F}
+pol2 <- c(88169, 88180) #S and K
+
+epa_metals <- bind_rows(epa_bc_16, epa_bc_17, epa_bc_18, epa_bc_19) %>% 
+  filter(State_Code == "08") %>% 
+  filter(Parameter_Code %in% pol2) %>% 
+  mutate(County_Code = str_pad(County_Code, width = 3, side = "left", pad = "0"),
+         Site_Num = str_pad(Site_Num, width = 4, side = "left", pad = "0")) %>% 
+  mutate(monitor_id = paste0(State_Code, County_Code, Site_Num)) %>% 
+  filter(monitor_id == "080310026") %>% 
+  rename(Max_Value = "1st_Max_Value") %>% 
+  dplyr::select(Date_Local, Arithmetic_Mean, Parameter_Code) %>% 
+  spread(Parameter_Code,Arithmetic_Mean)
+colnames(epa_metals)[2:3] <- c("S", "K")
+colnames(epa_metals) <- tolower(colnames(epa_metals))
+
+epa_metals2 <- bind_rows(
+  fromJSON(here::here("Data/AQS_API_JSON", "daily_88169_2019.json"))[["Data"]],
+  fromJSON(here::here("Data/AQS_API_JSON", "daily_88180_2019.json"))[["Data"]]
+) %>% 
+  filter(state_code == "08") %>% 
+  filter(parameter_code %in% pol2) %>% 
+  mutate(county_code = str_pad(county_code, width = 3, side = "left", pad = "0"),
+         site_num = str_pad(site_number, width = 4, side = "left", pad = "0")) %>% 
+  mutate(monitor_id = paste0(state_code, county_code, site_num)) %>% 
+  filter(monitor_id == "080310026") %>% 
+  dplyr::select(date_local, arithmetic_mean, parameter_code) %>% 
+  spread(parameter_code, arithmetic_mean) %>% 
+  mutate(date_local = as.Date(date_local, format = "%Y-%m-%d"))
+colnames(epa_metals2)[2:3] <- c("s", "k")
+
+epa_metals <- bind_rows(epa_metals, epa_metals2)
+
+epa_metals$s_k_ratio <- epa_metals$s / epa_metals$k
+
+summary(epa_metals$s_k_ratio)
+```
+
+
+```{r, echo = F, out.width='75%', fig.align='center', fig.cap='Figure 10. S/K ratios for the nearby Navajo St. monitoring site'}
+ggplot(epa_metals) +
+  geom_line(aes(x = date_local, y = s)) +
+  geom_smooth(aes(x = date_local, y = s), method = "loess") +
+  xlab("Sampling Date") + ylab("S (ug/m3)") +
+  scale_x_date(labels = date_format("%m-%Y")) +
+  simple_theme
+
+ggplot(epa_metals) +
+  geom_line(aes(x = date_local, y = k)) +
+  geom_smooth(aes(x = date_local, y = k), method = "loess") +
+  xlab("Sampling Date") + ylab("K (ug/m3)") +
+  scale_x_date(labels = date_format("%m-%Y")) +
+  simple_theme
+
+ggplot(epa_metals) +
+  geom_line(aes(x = date_local, y = s_k_ratio)) +
+  geom_smooth(aes(x = date_local, y = s_k_ratio), method = "loess") +
+  xlab("Sampling Date") + ylab("S/K Ratio") +
+  scale_x_date(labels = date_format("%m-%Y")) +
+  simple_theme
+
+ggsave(here::here("Figs/Calibration", "S_K_Ratios_Navajo_St_Monitor.jpeg"),
+       height = 5, width = 7, dpi = 500, units = "in", device = "jpeg")
+```
+
+### Iron
+John Volkens cited a study looking at how iron might interfere with absorption (White et al. 2016). The filter data show a bit of an uptick in Campaign 4, though it could just be more variability. A time series of iron concentrations at the Navajo St site (again-- the closest monitoring site with metals data to the I-25 site) shows Fe concentrations are similarly messy in winter of 2019.
+
+```{r, echo = F, out.width='75%', fig.align='center', fig.cap='Figure 11. Iron concentrations for I-25 site collocated monitors'}
+ggplot(cal_data_metals) +
+  geom_line(aes(x = StartDateTimeLocal, y = Fe_ug_m3, color = campaign)) +
+  geom_smooth(aes(x = StartDateTimeLocal, y = Fe_ug_m3), method = "loess") +
+  xlab("Sampling Date") + ylab("Iron (\u03bcg/m\u00b3)") +
+  scale_color_viridis(name = "Campaign", discrete = T) +
+  scale_x_date(labels = date_format("%m-%Y")) +
+  simple_theme
+ggsave(here::here("Figs/Calibration", "Fe_Yuma_St_Filters.jpeg"),
+       height = 5, width = 7, dpi = 500, units = "in", device = "jpeg")
+```
+
+```{r, include = F}
+pol3 <- c(88126) #Fe
+
+epa_iron <- bind_rows(epa_bc_16, epa_bc_17, epa_bc_18, epa_bc_19) %>% 
+  filter(State_Code == "08") %>% 
+  filter(Parameter_Code %in% pol3) %>% 
+  mutate(County_Code = str_pad(County_Code, width = 3, side = "left", pad = "0"),
+         Site_Num = str_pad(Site_Num, width = 4, side = "left", pad = "0")) %>% 
+  mutate(monitor_id = paste0(State_Code, County_Code, Site_Num)) %>% 
+  filter(monitor_id == "080310026") %>% 
+  rename(Max_Value = "1st_Max_Value") %>% 
+  dplyr::select(Date_Local, Arithmetic_Mean, Parameter_Code) %>% 
+  spread(Parameter_Code, Arithmetic_Mean) %>% 
+  rename(Fe = "88126")
+colnames(epa_iron) <- tolower(colnames(epa_iron))
+
+epa_iron2 <- fromJSON(here::here("Data/AQS_API_JSON", "daily_88126_2019.json"))[["Data"]] %>% 
+  filter(state_code == "08") %>% 
+  filter(parameter_code %in% pol3) %>% 
+  mutate(county_code = str_pad(county_code, width = 3, side = "left", pad = "0"),
+         site_num = str_pad(site_number, width = 4, side = "left", pad = "0")) %>% 
+  mutate(monitor_id = paste0(state_code, county_code, site_num)) %>% 
+  filter(monitor_id == "080310026") %>% 
+  dplyr::select(date_local, arithmetic_mean, parameter_code) %>% 
+  spread(parameter_code, arithmetic_mean) %>% 
+  mutate(date_local = as.Date(date_local, format = "%Y-%m-%d")) %>% 
+  rename(fe = "88126")
+
+epa_iron <- bind_rows(epa_iron, epa_iron2)
+summary(epa_iron$fe)
+```
+
+
+```{r, echo = F, out.width='75%', fig.align='center', fig.cap='Figure 12. Iron concentrations for the nearby Navajo St. monitoring site'}
+ggplot(epa_iron) +
+  geom_line(aes(x = date_local, y = fe)) +
+  geom_smooth(aes(x = date_local, y = fe), method = "loess") +
+  xlab("Sampling Date") + ylab("Iron (\u03bcg/m\u00b3)") +
+  scale_x_date(labels = date_format("%m-%Y")) +
+  simple_theme
+
+ggsave(here::here("Figs/Calibration", "Fe_Concentrations_Navajo_St_Monitor.jpeg"),
+       height = 5, width = 7, dpi = 500, units = "in", device = "jpeg")
+```
+
+### Elemental Carbon and OC/EC ratios
+
+Shantanu had the thought of comparing the BC data measured at the I-25 site with the EC data measured at the Navajo St. Site and comparing the two measurements. Note again that the Navajo St. site is about 3 miles from the I-25 site and is not considered a "near road" location. The time series plot shows EC concentrations are higher in the winter and appear to have higher variability in the winter of 2019.
+
+```{r, include = F}
+pol4 <- c(88381) #EC PM2.5 LC TOT
+
+epa_ec <- bind_rows(epa_bc_16, epa_bc_17, epa_bc_18, epa_bc_19) %>% 
+  filter(State_Code == "08") %>% 
+  filter(Parameter_Code %in% pol4) %>% 
+  mutate(County_Code = str_pad(County_Code, width = 3, side = "left", pad = "0"),
+         Site_Num = str_pad(Site_Num, width = 4, side = "left", pad = "0")) %>% 
+  mutate(monitor_id = paste0(State_Code, County_Code, Site_Num)) %>% 
+  filter(monitor_id == "080310026") %>% 
+  rename(Max_Value = "1st_Max_Value") %>% 
+  dplyr::select(Date_Local, Arithmetic_Mean, Parameter_Code) %>% 
+  spread(Parameter_Code, Arithmetic_Mean) %>% 
+  rename(ec = "88381")
+colnames(epa_ec) <- tolower(colnames(epa_ec))
+
+epa_ec2 <- fromJSON(here::here("Data/AQS_API_JSON", "daily_88381_2019.json"))[["Data"]] %>% 
+  filter(state_code == "08") %>% 
+  filter(parameter_code %in% pol4) %>% 
+  mutate(county_code = str_pad(county_code, width = 3, side = "left", pad = "0"),
+         site_num = str_pad(site_number, width = 4, side = "left", pad = "0")) %>% 
+  mutate(monitor_id = paste0(state_code, county_code, site_num)) %>% 
+  filter(monitor_id == "080310026") %>% 
+  dplyr::select(date_local, arithmetic_mean, parameter_code) %>% 
+  spread(parameter_code, arithmetic_mean) %>% 
+  mutate(date_local = as.Date(date_local, format = "%Y-%m-%d")) %>% 
+  rename(ec = "88381")
+
+epa_ec <- bind_rows(epa_ec, epa_ec2)
+summary(epa_ec$ec)
+
+pol4a <- c(88382) #OC PM2.5 LC TOT
+
+epa_oc <- bind_rows(epa_bc_16, epa_bc_17, epa_bc_18, epa_bc_19) %>% 
+  filter(State_Code == "08") %>% 
+  filter(Parameter_Code %in% pol4a) %>% 
+  mutate(County_Code = str_pad(County_Code, width = 3, side = "left", pad = "0"),
+         Site_Num = str_pad(Site_Num, width = 4, side = "left", pad = "0")) %>% 
+  mutate(monitor_id = paste0(State_Code, County_Code, Site_Num)) %>% 
+  filter(monitor_id == "080310026") %>% 
+  rename(Max_Value = "1st_Max_Value") %>% 
+  dplyr::select(Date_Local, Arithmetic_Mean, Parameter_Code) %>% 
+  spread(Parameter_Code, Arithmetic_Mean) %>% 
+  rename(oc = "88382")
+colnames(epa_oc) <- tolower(colnames(epa_oc))
+
+epa_oc2 <- fromJSON(here::here("Data/AQS_API_JSON", "daily_88382_2019.json"))[["Data"]] %>% 
+  filter(state_code == "08") %>% 
+  filter(parameter_code %in% pol4a) %>% 
+  mutate(county_code = str_pad(county_code, width = 3, side = "left", pad = "0"),
+         site_num = str_pad(site_number, width = 4, side = "left", pad = "0")) %>% 
+  mutate(monitor_id = paste0(state_code, county_code, site_num)) %>% 
+  filter(monitor_id == "080310026") %>% 
+  dplyr::select(date_local, arithmetic_mean, parameter_code) %>% 
+  spread(parameter_code, arithmetic_mean) %>% 
+  mutate(date_local = as.Date(date_local, format = "%Y-%m-%d")) %>% 
+  rename(oc = "88382")
+
+epa_oc <- bind_rows(epa_oc, epa_oc2)
+summary(epa_oc$oc)
+
+oc_ec_ratio <- dplyr::select(epa_ec, date_local, ec) %>% 
+  left_join(dplyr::select(epa_oc, date_local, oc), by = c("date_local")) %>% 
+  mutate(oc_ec = oc / ec)
+```
+
+```{r, echo = F, out.width='75%', fig.align='center', fig.cap='Figure 13. EC concentrations for the nearby Navajo St. monitoring site'}
+ggplot(epa_ec) +
+  geom_line(aes(x = date_local, y = ec)) +
+  geom_smooth(aes(x = date_local, y = ec), method = "loess") +
+  xlab("Sampling Date") + ylab("Daily Elemental Carbon (EC PM2.5 LC TOT; \u03bcg/m\u00b3)") +
+  scale_x_date(labels = date_format("%m-%y"), date_breaks = "3 months") +
+  simple_theme
+
+ggsave(here::here("Figs/Calibration", "EC_Concentrations_Navajo_St_Monitor.jpeg"),
+       height = 5, width = 7, dpi = 500, units = "in", device = "jpeg")
+
+ggplot(epa_oc) +
+  geom_line(aes(x = date_local, y = oc)) +
+  geom_smooth(aes(x = date_local, y = oc), method = "loess") +
+  xlab("Sampling Date") + ylab("Daily Organic Carbon; \u03bcg/m\u00b3") +
+  scale_x_date(labels = date_format("%m-%y"), date_breaks = "3 months") +
+  simple_theme
+
+ggsave(here::here("Figs/Calibration", "OC_Concentrations_Navajo_St_Monitor.jpeg"),
+       height = 5, width = 7, dpi = 500, units = "in", device = "jpeg")
+
+ggplot(oc_ec_ratio) +
+  geom_line(aes(x = date_local, y = oc_ec)) +
+  geom_smooth(aes(x = date_local, y = oc_ec), method = "loess") +
+  xlab("Sampling Date") + ylab("OC/EC") +
+  scale_x_date(labels = date_format("%m-%y"), date_breaks = "3 months") +
+  simple_theme
+
+ggsave(here::here("Figs/Calibration", "OC_EC_Ratios_Navajo_St_Monitor.jpeg"),
+       height = 5, width = 7, dpi = 500, units = "in", device = "jpeg")
+
+```
+
+## Comparing UPAS BC to EPA BC
+
+When we compared the UPAS TWA BC concentrations to the EPA monitoring data, we saw pretty poor fit (Figure 14). Once stratified by campaign, however, it became evident that there were differences in each campaign (Figure 15).
+
+```{r, out.width='75%', fig.align='center', fig.cap='Figure 14. Scatter plots for BC (UPAS vs EPA)'}
+knitr::include_graphics(here::here("Figs/Calibration", "BC_Cal_Curves.jpeg"))
+```
+
+```{r, out.width='75%', fig.align='center', fig.cap='Figure 15. Scatter plots for BC (UPAS vs EPA) stratified by campaign'}
+knitr::include_graphics(here::here("Figs/Calibration", "BC_Cal_Curves_by_Campaign.jpeg"))
+```
+
+## I-25 UPAS vs. Nearest UPAS (Speer Blvd. Park)
+
+To see if there was anything different about the Yuma st. site, I compared the calibration filters to filters from the closest site (Speer Blvd. Park) and other nearby sites that aren't near a major road (City Park and Mestizo-Curtis Park).
+
+```{r, include = F, echo = F}
+
+comp_filters <- as.character(c(130101:130801))
+
+compare_data <- filter_data %>% 
+  dplyr::select(filter_id, StartDateTimeLocal, EndDateTimeLocal, is_blank, 
+         bc_ug_m3, bc_ug_m3_uncorrected, campaign) %>% 
+  left_join(collocated_ids, by = "filter_id") %>% 
+  filter(is_blank == 0) %>% 
+  filter(!is.na(bc_ug_m3)) %>% 
+  filter(filter_id %in% comp_filters)
+
+comp_filters2 <- as.character(c(370103:370802))
+
+compare_data2 <- filter_data %>% 
+  dplyr::select(filter_id, StartDateTimeLocal, EndDateTimeLocal, is_blank, 
+         bc_ug_m3, bc_ug_m3_uncorrected, campaign) %>% 
+  left_join(collocated_ids, by = "filter_id") %>% 
+  filter(is_blank == 0) %>% 
+  filter(!is.na(bc_ug_m3)) %>% 
+  filter(filter_id %in% comp_filters2)
+
+comp_filters3 <- as.character(c(330103:330802))
+
+compare_data3 <- filter_data %>% 
+  dplyr::select(filter_id, StartDateTimeLocal, EndDateTimeLocal, is_blank, 
+         bc_ug_m3, bc_ug_m3_uncorrected, campaign) %>% 
+  left_join(collocated_ids, by = "filter_id") %>% 
+  filter(is_blank == 0) %>% 
+  filter(!is.na(bc_ug_m3)) %>% 
+  filter(filter_id %in% comp_filters3)
+
+comp_filters4 <- as.character(c(460104:460702))
+
+compare_data4 <- filter_data %>% 
+  dplyr::select(filter_id, StartDateTimeLocal, EndDateTimeLocal, is_blank, 
+         bc_ug_m3, bc_ug_m3_uncorrected, campaign) %>% 
+  left_join(collocated_ids, by = "filter_id") %>% 
+  filter(is_blank == 0) %>% 
+  filter(!is.na(bc_ug_m3)) %>% 
+  filter(filter_id %in% comp_filters4)
+```
+
+```{r, echo = F, warning = F, out.width='75%', fig.align='center', fig.cap='Figure 16. Time series of filters from I-25 site and nearby site data'}
+ggplot() +
+  geom_line(data = cal_data, aes(x = StartDateTimeLocal, y = bc_ug_m3, color = "I-25")) +
+  geom_smooth(data = cal_data, aes(x = StartDateTimeLocal, y = bc_ug_m3, color = "I-25"), method = "loess", se = F) +
+  geom_line(data = compare_data, aes(x = StartDateTimeLocal, y = bc_ug_m3, color = "Speer Blvd")) +
+  geom_smooth(data = compare_data, aes(x = StartDateTimeLocal, y = bc_ug_m3, color = "Speer Blvd"), method = "loess", se = F) +
+  geom_line(data = compare_data2, aes(x = StartDateTimeLocal, y = bc_ug_m3, color = "City Park")) +
+  geom_smooth(data = compare_data2, aes(x = StartDateTimeLocal, y = bc_ug_m3, color = "City Park"), method = "loess", se = F) +
+  geom_line(data = compare_data3, aes(x = StartDateTimeLocal, y = bc_ug_m3, color = "Mestizo-Curtis Park")) +
+  geom_smooth(data = compare_data3, aes(x = StartDateTimeLocal, y = bc_ug_m3, color = "Mestizo-Curtis Park"), method = "loess", se = F) +
+  geom_line(data = compare_data4, aes(x = StartDateTimeLocal, y = bc_ug_m3, color = "Thornton")) +
+  geom_smooth(data = compare_data4, aes(x = StartDateTimeLocal, y = bc_ug_m3, color = "Thornton"), method = "loess", se = F) +
+  xlab("Sampling Date") + ylab("UPAS BC (\u03bcg/m\u00b3)") +
+  scale_x_date(labels = date_format("%m-%Y")) +
+  scale_color_viridis(name = "Location", discrete = T) +
+  simple_theme
+```
+
+## Initial Regression Models
+
+Nothing in the above analyses helped explain why our BC data were so weird, so we had to proceed with calibration.
+
+Our regression model to fit the EPA monitoring data with the UPAS data was very poor. The correlation between UPAS BC and monitor BC was 0.18. The linear regression resulted in a negative adjusted R^2^ value (-0.01), though diagnostic plots showed that the linear model fit was appropriate.
+
+```{r, echo = F, include = F}
+
+#' Assign start and end BC concentrations from the monitoring data
+for (i in 1:nrow(cal_data)) {
+  df <- slice(cal_data, i)
+  
+  if(is.na(df$StartDateTimeLocal[1])) next
+  
+  #' Which monitor is collocated
+  paired_monitor_id <- df$monitor_id[1]
+  
+  #' What are the start and end dates for this filter
+  start_date <- df$StartDateTimeLocal[1]
+  end_date <- df$EndDateTimeLocal[1]
+  
+  dates <- seq.Date(from = start_date, to = end_date, by = "day")
+  
+  #' Get mean concentration from the monitor for the period covered by the filter
+  mon <- monitor_data %>% 
+    filter(monitor_id == paired_monitor_id) %>% 
+    filter(Date_Local %in% dates)
+  
+  mean_pol <- mean(mon$Arithmetic_Mean, na.rm=T)
+  
+  cal_data[i, "monitor_mean"] <- mean_pol
+  cal_data[i, "monitor_mean_n_obs"] <- nrow(mon)
+}
+
+cor(cal_data$bc_ug_m3, cal_data$monitor_mean)
+plot(cal_data$bc_ug_m3, cal_data$monitor_mean)
+```
+
+```{r, echo = F} 
+i25_lm <- lm(bc_ug_m3 ~ monitor_mean, data = cal_data)
+summary(i25_lm)
+par(mfrow=c(2,2))
+plot(i25_lm)
+par(mfrow=c(1,1))
+```
+
+<!-- ## Adding Addditional Covariates (Temp, PM~2.5~) -->
+
+<!-- To try to improve model fit, we first tried to model each campaign separately. However, this approach would not work for the full data set because we only had co-located data for three of the four campaigns. Instead, we included indicator variables for campaign (with campaign 2 serving as the reference group) and the temperature measured at the I-25 site. These additions only moderately improved the model fit. -->
+
+<!-- ```{r, echo = F, include = F} -->
+<!-- cal_data2 <- filter(cal_data, monitor_id == "080310027") -->
+
+<!-- #' Assign start and end TEMP from the monitoring data -->
+<!-- #' Assign a smoke day variable -->
+<!-- for (i in 1:nrow(cal_data2)) { -->
+<!--   df <- slice(cal_data2, i) -->
+
+<!--   if(is.na(df$StartDateTimeLocal[1])) next -->
+
+<!--   #' Which monitor is collocated -->
+<!--   paired_monitor_id <- df$monitor_id[1] -->
+
+<!--   #' What are the start and end dates for this filter -->
+<!--   start_date <- df$StartDateTimeLocal[1] -->
+<!--   end_date <- df$EndDateTimeLocal[1] -->
+
+<!--   dates <- seq.Date(from = start_date, to = end_date, by = "day") -->
+
+<!--   #' Get mean temperature from the monitor for the period covered by the filter -->
+<!--   temp <- monitor_temp %>%  -->
+<!--     filter(monitor_id == paired_monitor_id) %>%  -->
+<!--     filter(Date_Local %in% dates) -->
+<!--   mean_temp <- mean(temp$Arithmetic_Mean, na.rm=T) -->
+
+<!--   cal_data2[i, "monitor_temp"] <- mean_temp -->
+<!--   cal_data2[i, "monitor_temp_n_obs"] <- nrow(temp) -->
+
+<!--   #' Get mean PM2.5 from the monitor for the period covered by the filter -->
+<!--   pm <- monitor_pm %>%  -->
+<!--     filter(monitor_id == paired_monitor_id) %>%  -->
+<!--     filter(Date_Local %in% dates) -->
+<!--   mean_pm <- mean(pm$Arithmetic_Mean, na.rm=T) -->
+
+<!--   cal_data2[i, "monitor_pm"] <- mean_pm -->
+<!--   cal_data2[i, "monitor_pm_n_obs"] <- nrow(pm) -->
+
+<!--   #' Binary if.any smoke day for the sampling period -->
+<!--   smoke <- monitor_smoke %>% -->
+<!--     filter(monitor_id == paired_monitor_id) %>% -->
+<!--     filter(Date_Local %in% dates) -->
+<!--   sum_smoke <- sum(smoke$smoke_day, na.rm=T) -->
+
+<!--   cal_data2[i, "monitor_smoke"] <- ifelse(sum_smoke > 0, 1, 0) -->
+<!-- } -->
+
+
+<!-- cal_data3 <- cal_data2 %>%  -->
+<!--   mutate(camp2 = ifelse(campaign == "Campaign2", 1, 0), -->
+<!--          camp3 = ifelse(campaign == "Campaign3", 1, 0), -->
+<!--          camp4 = ifelse(campaign == "Campaign4", 1, 0), -->
+<!--          camp123 = ifelse(campaign == "Campaign4", 0, 1), -->
+<!--          monitor_temp_sq = monitor_temp^2)  -->
+
+<!-- ``` -->
+
+<!-- ```{r, echo = F} -->
+<!-- i25_lm2b <- lm(bc_ug_m3 ~ monitor_mean + monitor_temp + monitor_temp_sq + -->
+<!--                  camp3 + camp4,  -->
+<!--                data = cal_data3) -->
+<!-- summary(i25_lm2b) -->
+<!-- par(mfrow=c(2,2)) -->
+<!-- plot(i25_lm2b) -->
+<!-- par(mfrow=c(1,1)) -->
+<!-- ``` -->
+
+<!-- What ended up having the effect on model fit was including the PM~2.5~ measurements at the I-25 site. Our final model included the UPAS BC measurement, monitor PM~2.5~, monitor temperature, monitor temperature squared, and the indicator variables for campaign (with campaign 2 as the reference group). This final model had an adjusted R^2^ of 0.82, a mean bias of -1.02 $\mu$g/m^3^ and an RMSE of 0.7.     -->
+
+<!-- ```{r, echo = F}  -->
+<!-- i25_lm2d <- lm(bc_ug_m3 ~ monitor_mean + monitor_temp + monitor_temp_sq + -->
+<!--                  monitor_pm + camp3 + camp4,  -->
+<!--                data = cal_data3) -->
+<!-- summary(i25_lm2d) -->
+<!-- par(mfrow=c(2,2)) -->
+<!-- plot(i25_lm2d) -->
+<!-- par(mfrow=c(1,1)) -->
+<!-- ``` -->
+
+<!-- ```{r, echo = F, include = F} -->
+<!-- fit_lm <- i25_lm2d -->
+<!-- summary(fit_lm) -->
+<!-- fit_monitor <- "080310027" -->
+
+<!-- #' fit_data <- cal_data3 %>%  -->
+<!-- #'   #' Calibrated BC -->
+<!-- #'   mutate(bc_ug_m3_cal = predict(fit_lm)) -->
+
+<!-- #' Coefficients for calibration equation -->
+<!-- int <- unname(fit_lm$coefficients[1]) -->
+<!-- beta_monitor <- unname(fit_lm$coefficients[2]) -->
+<!-- beta_temp <- unname(fit_lm$coefficients[3]) -->
+<!-- beta_temp_sq <- unname(fit_lm$coefficients[4]) -->
+<!-- beta_pm <- unname(fit_lm$coefficients[5]) -->
+<!-- beta_camp3 <- unname(fit_lm$coefficients[6]) -->
+<!-- beta_camp4 <- unname(fit_lm$coefficients[7]) -->
+
+<!-- #' Calibrating using equation -->
+<!-- fit_data <- cal_data3 %>%  -->
+<!--   #' Calibrated BC -->
+<!--   mutate(bc_ug_m3_cal = (bc_ug_m3 - int - (beta_temp * monitor_temp) - -->
+<!--                            (beta_temp_sq * monitor_temp_sq) - (beta_pm * monitor_pm) - -->
+<!--                            (beta_camp3 * camp3) - (beta_camp4 * camp4))/ beta_monitor) -->
+
+<!-- #' Mean bias and RMSE -->
+<!-- mean_bias <- sum((fit_data$bc_ug_m3_cal - fit_data$bc_ug_m3), na.rm=T) / nrow(fit_data) -->
+<!-- mean_bias -->
+
+<!-- rmse <- sqrt(sum((fit_data$bc_ug_m3_cal - fit_data$bc_ug_m3)^2, -->
+<!--                  na.rm = TRUE)) / nrow(fit_data) -->
+<!-- rmse -->
+<!-- ``` -->
+
+## Deming Regression
+We presented the OLS models to our colleagues from Engineering to get their thoughts. John Volckens thought that Deming regression might be more appropriate, so that's what we did. Deming (orthoganol) regression accounts for errors in both instruments (aethalometer and UPAS/transmissometer). We assumed equal variance in the errors based on JV's recommendation. I'm still looking for an empirical study to site. The OLS and Deming curves are shown below. We stratified the regression by campaign because we saw some differences depending on when the filters were sampled
+
+```{r, out.width='75%', fig.align='center', fig.cap='Figure 17. Box plots of raw and calibrated BC by month'}
+knitr::include_graphics(here::here("Figs/Calibration", "BC_LM_Dem_by_Campaign.jpeg"))
+```
+
+## Calibration of spring data
+
+Because we could not co-locate a UPAS with the aethalometer during the late spring/summer season, we had to determine which season's curve would best fit the Campaign 1 data. We decided to use the Campaign 2 (summer) data because the distribution of raw measurements and temperatures for Campaign 1 were most similar to Campaign 2. 
+
+## Comparison of raw and calibrated BC Data
+
+We used separate Deming regression models (```raw ~ int + beta*aeth```) to calibrate each campaign's raw BC data. Then the calibrated meausrements were combined into a single data set.
+
+After using the models to calibrate the full filter data set, we used box plots to compare raw and calibrated UPAS BC results to the EPA monitor at the I-25 site. These plots are shown below. 
+
+```{r, out.width='75%', fig.align='center', fig.cap='Figure 18. Box plots of raw and calibrated BC by month'}
+knitr::include_graphics(here::here("Figs/Calibration", "Monthly_Means_BC.jpeg"))
+knitr::include_graphics(here::here("Figs/Calibration", "Monthly_Means_BC_NoLM.jpeg"))
+```
+
+```{r, out.width='75%', fig.align='center', fig.cap='Figure 19. Box plots of raw and calibrated BC by season'}
+knitr::include_graphics(here::here("Figs/Calibration", "Seasonal_Means_BC.jpeg"))
+knitr::include_graphics(here::here("Figs/Calibration", "Seasonal_Means_BC_NoLM.jpeg"))
+```
+
+## Plotting some UPAS parameters for the monitors collocated with the EPA aethalometer
+
+We wanted to see if there were any issues with the UPAS operating parameters.
+
+```{r, out.width='75%', fig.align='center'}
+knitr::include_graphics(here::here("Figs/Calibration", "PumpP.jpeg"))
+knitr::include_graphics(here::here("Figs/Calibration", "PumpT.jpeg"))
+knitr::include_graphics(here::here("Figs/Calibration", "PumpRH.jpeg"))
+knitr::include_graphics(here::here("Figs/Calibration", "VolFlowRate.jpeg"))
+knitr::include_graphics(here::here("Figs/Calibration", "AtmoRho.jpeg"))
+knitr::include_graphics(here::here("Figs/Calibration", "MassFlow.jpeg"))
+```
+
+## UPAS Metadata Summary Table
+
+```{r, echo = F, include = F}
+meta_data_table <- read_csv(here::here("Data/UPAS_Data", "Summary_Yuma_St_UPAS_Metadata.csv"))
+```
+
+```{r, echo = F}
+knitr::kable(meta_data_table)
+```
+
+
+
+
