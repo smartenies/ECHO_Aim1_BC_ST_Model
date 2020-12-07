@@ -20,6 +20,14 @@
 # RStudio files
 .Rproj.user/
 
+# Data folders and publication materials
+/Data
+/Raw_Data
+/Secondary_Data
+/Manuscripts
+/Figs
+/Presentations
+
 # produced vignettes
 vignettes/*.html
 vignettes/*.pdf
