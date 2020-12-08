@@ -67,12 +67,20 @@ for (i in 1:length(dates)) {
                     y, "/", m, "/hms_smoke", y, m, d, ".zip")
   
   #' Download from the NOAA website
-  download.file(hms_url, destfile = here::here("Data/Temp", "hms_temp.zip"))
+  #' Uses tryCatch to skip the file if the URL is not available
+  try_dl <- tryCatch(
+    download.file(hms_url, destfile = here::here("Data/Temp", "hms_temp.zip")),
+    error = function(e) e
+  )
   
-  #' Unzip the .zip and move all of the files to the hms_smoke folder 
-  unzip(here::here("Data/Temp", "hms_temp.zip"), 
-        exdir = here::here("Secondary_Data", "HMS_Smoke"))
-  file.remove(here::here("Data/Temp", "hms_temp.zip"))
+  if(!inherits(try_dl, "error")){
+    download.file(hms_url, destfile = here::here("Data/Temp", "hms_temp.zip"))
+    
+    #' Unzip the .zip and move all of the files to the hms_smoke folder 
+    unzip(here::here("Data/Temp", "hms_temp.zip"), 
+          exdir = here::here("Secondary_Data", "HMS_Smoke"))
+    file.remove(here::here("Data/Temp", "hms_temp.zip"))
+  }
 }
 
 
