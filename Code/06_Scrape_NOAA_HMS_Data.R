@@ -45,6 +45,7 @@ if(!dir.exists(here::here("Secondary_Data/HMS_Smoke"))) dir.create(here::here("S
 #' 1) Download archived data from the NOAA website
 #' Note that "today's" data might not be "finalized", so the date sequence is 
 #' all dates between the start date and "yesterday"
+#' -----------------------------------------------------------------------------
 
 start_date <- as.Date("2009-01-01")
 end_date <- Sys.Date() - 1
@@ -82,6 +83,33 @@ for (i in 1:length(dates)) {
     file.remove(here::here("Data/Temp", "hms_temp.zip"))
   }
 }
+
+#' -----------------------------------------------------------------------------
+#' 2) Read in all of the shapefiles, convert to sf objects, project to AEA
+#' and save as .csv
+#' -----------------------------------------------------------------------------
+
+smoke_files <- list.files(here::here("Secondary_Data", "HMS_Smoke"),
+                          pattern = ".shp")
+
+for (i in 1:length(smoke_files)) {
+  
+  try_read <- tryCatch(
+    st_read(here::here("Secondary_Data", "HMS_Smoke", smoke_files[i])),
+    error = function(e) e
+  )
+  
+  if(!inherits(try_read, "error")){
+    temp_shp <- st_read(here::here("Secondary_Data", "HMS_Smoke", smoke_files[i]))
+
+    temp_sf <- st_transform(temp_shp, crs = albers)
+    
+    file_name <- gsub(".shp", "_AEA.csv", smoke_files[i])
+    st_write(temp_sf, here::here("Data/Smoke_Data", file_name),
+             layer_options = "GEOMETRY=AS_WKT", delete_dsn = T)
+  }
+}
+
 
 
 

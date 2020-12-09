@@ -19,6 +19,14 @@ albers <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 
 
 aqs_path <- here::here("Secondary_Data", "EPA_Air_Quality_System_Data")
 
+epa_monitors <- read_csv(here::here("Secondary_Data", "EPA_Air_Quality_System_Data",
+                                    "aqs_monitors.csv")) 
+colnames(epa_monitors) <- gsub(" ", "_", colnames(epa_monitors))
+
+co_monitors <- filter(epa_monitors, State_Code == "08")
+write_csv(co_monitors, here::here("Secondary_Data", "EPA_Air_Quality_System_Data",
+                                  "colorado_monitors.csv"))
+
 #' -----------------------------------------------------------------------------
 #' First, read in the daily PM2.5 and simplify the data sets
 #' -----------------------------------------------------------------------------

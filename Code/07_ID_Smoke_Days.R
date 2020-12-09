@@ -1,13 +1,9 @@
 #' -----------------------------------------------------------------------------
-#' Project: ECHO Aim 1 Land Use Regression
-#' 
-#' Task: Calculate long-term monthly averages at each monitor and ID smoke days
-#' 
+#' Project: ECHO Aim 1 ST Prediction Model for Black Carbon
+#' Task: Identify "smoke impacted" days
+#' Date created: Date Created: November 19, 2018
 #' Author: Sheena Martenies
-#' 
-#' Date Created: November 19, 2018
-#' 
-#' Contact: sheena.martenies@colostate.edu
+#' Contact: smarte4@illinois.edu
 #' -----------------------------------------------------------------------------
 
 #' Load required libraries
@@ -22,7 +18,7 @@ library(ggthemes)
 #' For ggplots
 simple_theme <- theme(
   #aspect.ratio = 1,
-  text  = element_text(family="Calibri",size = 12, color = 'black'),
+  text  = element_text(size = 12, color = 'black'),
   panel.spacing.y = unit(0,"cm"),
   panel.spacing.x = unit(0.25, "lines"),
   panel.grid.minor = element_line(color = "transparent"),
@@ -35,7 +31,6 @@ simple_theme <- theme(
   plot.margin=grid::unit(c(0,0,0,0), "mm"),
   legend.key = element_blank()
 )
-windowsFonts(Calibri=windowsFont("TT Calibri"))
 options(scipen = 9999) #avoid scientific notation
 
 #' Coordinate reference systems 
@@ -43,23 +38,22 @@ ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
 albers <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
 
 #' -----------------------------------------------------------------------------
-#' 1) Calculate long-term (2009-2019) averages by month and monitor
+#' 1) Calculate long-term (2009-2020) averages by month and monitor
 
-years <- c(2008:2019)
+years <- c(2009:2020)
 time_zone <- "America/Denver"
 
 #' read in all data, summarize to long-term monthly averages
-monitor_data_all <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv")) %>% 
+monitor_data <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv")) 
+
+monitor_sp_data <- select(monitor_data, monitor_id, WKT)
+monitor_sp_data <- unique(monitor_sp_data)
+
+monitor_data <- monitor_data %>% 
   st_as_sf(wkt = "WKT", crs = albers) %>% 
   mutate(month = month(Date_Local),
          year = year(Date_Local)) %>% 
   filter(year %in% years)
-
-#' Just use the 24H data for the primary instrument at each location
-# monitor_data_temp <- filter(monitor_data_all, Sample_Duration != "1 HOUR") %>%
-#   filter(POC == 1)
-
-monitor_data <- filter(monitor_data_all, POC == 1)
 
 monitor_means <- monitor_data %>% 
   group_by(monitor_id, month) %>% 
@@ -71,64 +65,66 @@ ggplot(monitor_means) +
   simple_theme
 
 #' -----------------------------------------------------------------------------
-#' 2) ID dates where we have monitoring data and smoke data
-
-pm_dates <- gsub("-", "", as.character(unique(monitor_data$Date_Local)))
-
-#' list of smoke files
-smoke_files <- list.files(here::here("Data/Smoke_Data"))
-smoke_files <- smoke_files[which(str_detect(smoke_files, paste(c(years),collapse = '|')))]
-
-num_exp <- "[[:digit:]]+"
-
-smoke_dates <- str_extract(smoke_files, num_exp)
-
-shared_dates <- intersect(pm_dates, smoke_dates)
-
-#' -----------------------------------------------------------------------------
 #' 2) Determine if each monitor overlaps with plume (within 50 km) and has a
 #' concentration 1 SD or 2 SD higher than the long term monthly average
 
 #' loop through dates
 smoke_days <- data.frame()
 
+#' unique monitors
+monitors <- unique(monitor_data$monitor_id)
+
+#' what buffer do we want to consider?
+#' AEA units are meters
 buff_distance <- 50000
 
-for(i in 1:length(shared_dates)) {
-  print(paste(i, "of", length(shared_dates), "dates"))
+for(i in 1:length(monitors)) {
   
-  smoke_name <- paste0("hms_smoke", shared_dates[i], "_AEA.csv")
+  print(paste(i, "of", length(monitors), "monitor locations"))
   
-  if(!file.exists(here::here("Data/Smoke_Data", smoke_name))) {
-    temp <- data.frame(date = shared_dates[i],
-                       monitor = NA,
-                       plume_within_50km = NA,
-                       pm_exceeds_mean_1sd = NA,
-                       pm_exceeds_mean_2sd = NA)
-    smoke_days <- bind_rows(smoke_days, temp)
-    rm(temp)
+  #' A df with just one monitor
+  mon_df <- filter(monitor_data, monitor_id == monitors[i])
+  
+  #' Dates for which we have PM data at that monitor
+  pm_dates <- gsub("-", "", as.character(unique(mon_df$Date_Local)))
+  
+  for(j in 1:length(pm_dates)) {
+    smoke_name <- paste0("hms_smoke", pm_dates[j], "_AEA.csv")
     
-  } else {
-    plumes <- read_csv(here::here("Data/Smoke_Data", smoke_name)) 
-    
-    if(plumes$WKT[1] != "GEOMETRYCOLLECTION EMPTY") {
-      plumes_sf <- st_as_sf(plumes, wkt = "WKT", crs = albers)
-      plumes_sf <- filter(plumes_sf, !is.na(st_is_valid(plumes_sf)))
+    #' If there's no shapefile, make each metric NA
+    if(!file.exists(here::here("Data/Smoke_Data", smoke_name))) {
+      temp <- data.frame(date = pm_dates[j],
+                         monitor = monitors[i],
+                         daily_mean_pm = NA,
+                         plume_within_50km = NA,
+                         pm_exceeds_mean_1sd = NA,
+                         pm_exceeds_mean_2sd = NA)
+      smoke_days <- bind_rows(smoke_days, temp)
+      rm(temp)
       
-      monitors_temp <- filter(monitor_data, 
-                              Date_Local == as.Date(shared_dates[i], format = "%Y%m%d")) 
-      monitor_ids <- unique(monitors_temp$monitor_id)
+    } else {
+      plumes <- read_csv(here::here("Data/Smoke_Data", smoke_name), 
+                         col_types = cols()) 
       
-      monitor_means <- monitor_data %>% 
-        group_by(monitor_id, month) %>% 
-        summarize(monthly_mean = mean(Arithmetic_Mean, na.rm=T),
-                  monthly_sd = sd(Arithmetic_Mean, na.rm=T))
+      if (nrow(plumes) == 0) {
+        temp <- data.frame(date = pm_dates[j],
+                           monitor = monitors[i],
+                           daily_mean_pm = NA,
+                           plume_within_50km = NA,
+                           pm_exceeds_mean_1sd = NA,
+                           pm_exceeds_mean_2sd = NA)
+        smoke_days <- bind_rows(smoke_days, temp)
+        rm(temp, plumes)
       
-      for (j in 1:length(monitor_ids)) {
-        monitor_sf <- filter(monitors_temp, monitor_id == monitor_ids[j])
-        if(nrow(monitor_sf) == 0) next
+      } else {
+        plumes_sf <- st_as_sf(plumes, wkt = "WKT", crs = albers)
+        plumes_sf <- filter(plumes_sf, !is.na(st_is_valid(plumes_sf)))
         
-        # monitor_sf <- st_as_sf(monitor_sf, wkt = "WKT", crs = albers)
+        monitors_temp <- filter(mon_df, 
+                                Date_Local == as.Date(pm_dates[j], format = "%Y%m%d")) 
+        
+        monitor_sf <- st_as_sf(monitors_temp, wkt = "WKT", crs = albers) %>%
+          summarize(Arithmetic_Mean = mean(Arithmetic_Mean, na.rm = T))
         
         monitor_buffer <- st_buffer(monitor_sf, dist = buff_distance)
         
@@ -137,57 +133,52 @@ for(i in 1:length(shared_dates)) {
         
         #' is the daily mean higher than 1 sd above the long-term average?
         #' is the daily mean higher than 2 sd above the long-term average?
-        long_term_mean <- filter(monitor_means, monitor_id == monitor_ids[j])
-        monthly_lt_mean <- filter(long_term_mean, 
-                                  month == month(as.Date(shared_dates[i], format = "%Y%m%d")))
-        monthly_metric_1sd <- monthly_lt_mean$monthly_mean + (1*monthly_lt_mean$monthly_sd)
-        monthly_metric_2sd <- monthly_lt_mean$monthly_mean + (2*monthly_lt_mean$monthly_sd)
+        long_term_mean <- filter(monitor_means, monitor_id == monitors[i] & 
+                                   month == month(as.Date(pm_dates[j], format = "%Y%m%d")))
+        monthly_metric_1sd <- long_term_mean$monthly_mean[1] + (1*long_term_mean$monthly_sd[1])
+        monthly_metric_2sd <- long_term_mean$monthly_mean[1] + (2*long_term_mean$monthly_sd[1])
         
         pm_exceeds_1sd <- monitor_sf$Arithmetic_Mean >= monthly_metric_1sd
         pm_exceeds_2sd <- monitor_sf$Arithmetic_Mean >= monthly_metric_2sd
         
-        temp <- data.frame(date = shared_dates[i],
-                           monitor = monitor_ids[j],
+        temp <- data.frame(date = pm_dates[j],
+                           monitor = monitors[i],
+                           daily_mean_pm = monitor_sf$Arithmetic_Mean,
                            plume_within_50km = plume_intersect,
                            pm_exceeds_mean_1sd = pm_exceeds_1sd,
                            pm_exceeds_mean_2sd = pm_exceeds_2sd)
         smoke_days <- bind_rows(smoke_days, temp)
-        rm(temp)
+        rm(temp, plumes, plumes_sf)
       }
-    } else {
-      temp <- data.frame(date = shared_dates[i],
-                         monitor = NA,
-                         plume_within_50km = NA,
-                         pm_exceeds_mean_1sd = NA,
-                         pm_exceeds_mean_2sd = NA)
-      smoke_days <- bind_rows(smoke_days, temp)
-      rm(temp)
     }
-    rm(plumes)
-  } 
+  }
 }
 
 mutate_smoke_days <- smoke_days %>% 
   mutate(smoke_day_1sd = plume_within_50km * pm_exceeds_mean_1sd,
          smoke_day_2sd = plume_within_50km * pm_exceeds_mean_2sd,
          Date_Local = as.Date(date, format = "%Y%m%d")) %>% 
-  rename(monitor_id = monitor)
+  rename(monitor_id = "monitor")
 table(mutate_smoke_days$plume_within_50km, mutate_smoke_days$pm_exceeds_mean_1sd)
 table(mutate_smoke_days$plume_within_50km, mutate_smoke_days$pm_exceeds_mean_2sd)
 
-monitor_smoke_days <- full_join(monitor_data, mutate_smoke_days, 
-                                by = c("monitor_id", "Date_Local"))
+monitor_smoke_days <- left_join(mutate_smoke_days, monitor_sp_data,
+                                by = "monitor_id")
 
-st_write(monitor_smoke_days, here::here("Data", "Monitor_Smoke_Days_AEA.csv"),
-         layer_options = "GEOMETRY=AS_WKT", delete_dsn = T)
+write_csv(monitor_smoke_days, here::here("Data", "Monitor_Smoke_Days_AEA.csv"))
 
 #' -----------------------------------------------------------------------------
-#' Spot check 5% of days
+#' Spot check 1% of days
 #' -----------------------------------------------------------------------------
 
-random_dates <- sample(unique(mutate_smoke_days$Date_Local), 
-                       length(unique(mutate_smoke_days$Date_Local)) * 0.05)
-sample_days <- filter(mutate_smoke_days, Date_Local %in% random_dates)
+years <- c(2009:2020)
+
+monitor_smoke_days <- read_csv(here::here("Data", "Monitor_Smoke_Days_AEA.csv")) %>%
+  st_as_sf(wkt = "WKT", crs = albers)
+
+random_dates <- sample(unique(monitor_smoke_days$Date_Local), 
+                       length(unique(monitor_smoke_days$Date_Local)) * 0.01)
+sample_days <- filter(monitor_smoke_days, Date_Local %in% random_dates)
 
 table(sample_days$plume_within_50km, sample_days$pm_exceeds_mean_1sd)
 
