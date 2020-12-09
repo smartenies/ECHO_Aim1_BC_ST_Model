@@ -1,8 +1,9 @@
 #' =============================================================================
-#' Project: ECHO LUR
+#' Project: ECHO Aim 1 ST Prediction Model for Black Carbon
+#' Task: Clean UPAS PM2.5 gravimetric data
 #' Date created: December 9, 2018
 #' Author: Sheena Martenies
-#' Contact: Sheena.Martenies@colostate.edu
+#' Contact: smarte4@illinois.edu
 #' 
 #' Description:
 #' This script cleans the PM2.5 gravimetric data for each UPAS sampling campaign
@@ -25,7 +26,7 @@ library(readxl)
 #' For ggplots
 simple_theme <- theme(
   #aspect.ratio = 1,
-  text  = element_text(family="Calibri",size = 12, color = 'black'),
+  text  = element_text(size = 12, color = 'black'),
   panel.spacing.y = unit(0,"cm"),
   panel.spacing.x = unit(0.25, "lines"),
   panel.grid.minor = element_line(color = "transparent"),
@@ -38,7 +39,6 @@ simple_theme <- theme(
   plot.margin=grid::unit(c(0,0,0,0), "mm"),
   legend.key = element_blank()
 )
-windowsFonts(Calibri=windowsFont("TT Calibri"))
 options(scipen = 9999) #avoid scientific notation
 
 albers <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
@@ -49,9 +49,9 @@ ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
 #' Read in and organize gravimetric data
 #' -----------------------------------------------------------------------------
 
-campaign_names <- c("Campaign1", "Campaign2", "Campaign3", "Campaign4")
+campaign_names <- paste0("Campaign", c(1, 2, 3, 4, 5))
 
-filter_path <- "R:/RSTOR-Magzamen/Research/Projects/ECHO_Aim1/Raw_Data/Filter_Data/"
+filter_path <- here::here("Raw_Data/Filter_Data")
 filter_data_list <- list()
 
 for(camp in 1:length(campaign_names)) {
@@ -60,7 +60,7 @@ for(camp in 1:length(campaign_names)) {
   filter_data_name <- paste0("ECHO_Filter_Data_", campaign_name, "_Formatted.xlsx")
   
   #' Read in the gravimetric data from the Powerhouse
-  filter_data <- read_xlsx(paste0(filter_path, filter_data_name), 
+  filter_data <- read_xlsx(paste0(filter_path, "/", filter_data_name), 
                            sheet = "Gravimetric") %>% 
     select(-starts_with("...")) %>% 
     mutate(campaign = campaign_name)
@@ -103,7 +103,8 @@ for(camp in 1:length(campaign_names)) {
     st_as_sf(wkt = "WKT", crs = albers)
 
   filter_data_sf <- left_join(filter_vol_data, locations, by = c("filter_id", "campaign")) %>% 
-    select(-c(Location, geocode_add))
+    select(-c(Location, geocode_add)) %>%
+    distinct()
   glimpse(filter_data_sf)
   
   print(sum(duplicated(filter_data_sf$filter_id)))
@@ -133,7 +134,7 @@ for(camp in 1:length(campaign_names)) {
   
   
   #' Campaign 3 was our "friends and family" campaign-- no paired data
-  if(camp != 3) {
+  if(campaign_names[camp] != "Campaign3") {
     participant_ids <- select(filter_data_sf, participant_id, indoor_monitor_id) %>% 
       filter(!is.na(participant_id))
     
@@ -155,13 +156,13 @@ for(camp in 1:length(campaign_names)) {
                    fill = "blue", alpha = 0.25) +
     simple_theme
   blank_hist_name <- paste0("Blank_PM_Histogram_", campaign_name, ".jpeg")
-  ggsave(filename = here::here("Figs/Cleaning", blank_hist_name), 
+  ggsave(filename = here::here("Figs/Data_Cleaning", blank_hist_name), 
          device = "jpeg", dpi=500, units = "in", height = 4, width = 4)
   
   #' Based on EPA Method 2.12, we can consider field blanks "valid" when the mass
   #' difference between pre- and post-weighing is < 30 ug (See Chapter 10 Page 9)
   #' Per the SOP, the sampled filters are not blank corrected (Chapter 10 page 21)
-  #' #' https://www3.epa.gov/ttnamti1/files/ambient/pm25/qa/m212.pdf
+  #' https://www3.epa.gov/ttnamti1/files/ambient/pm25/qa/m212.pdf
   
   filter_data_sf <- filter_data_sf %>% 
     mutate(blank_passes_qc = ifelse(is_blank == 1,
@@ -189,21 +190,22 @@ for(camp in 1:length(campaign_names)) {
   lod <- 3*blanks_sd$blank_sd
   loq <- 10*blanks_sd$blank_sd
   
-  blank_name <- paste0("Field_Blanks_PM_", campaign_name, ".csv")
+  blank_name <- paste0("Field_Blanks_PM_", campaign_names[camp], ".csv")
   write_csv(filter_data_blanks, here::here("Data/Filter_Data", blank_name))
   
   #' Flag mass differences below the LOD and LOQ
   filter_data_sf <- filter_data_sf %>% 
     
     #' Are any measurements below the limit of detection (LOD) or limit of 
-    #' quanitfication (LOQ)?
-    mutate(lod = lod,
-           loq = loq, 
-           below_lod = ifelse(pm_mass_ug < lod, 1, 0), 
-           below_loq = ifelse(pm_mass_ug < loq, 1, 0))
+    #' quanitification (LOQ)?
+    mutate(pm_lod = lod,
+           pm_loq = loq, 
+           pm_below_lod = ifelse(pm_mass_ug < lod, 1, 0), 
+           pm_below_loq = ifelse(pm_mass_ug < loq, 1, 0))
   
-  table(filter_data_sf$below_lod)
-  table(filter_data_sf$below_loq)
+  summary(filter_data_sf$pm_mass_ug)
+  table(filter_data_sf$pm_below_lod)
+  table(filter_data_sf$pm_below_loq)
   
   print(sum(duplicated(filter_data_sf$filter_id)))
   
@@ -225,17 +227,21 @@ for(camp in 1:length(campaign_names)) {
     #' based on the run times calculated from the UTC and Local timestamps.
     #' There should not be too much of a difference in these concentrations.
     mutate(pm_ug_m3 = pm_mass_ug / logged_rt_volume_m3,
+           pm_ug_m3_samp_vol = pm_mass_ug / (SampledVolume/10^3),
            pm_ug_m3_local_rt_vol = pm_mass_ug / local_rt_volume_m3,
            pm_ug_m3_utc_rt_vol = pm_mass_ug / utc_rt_volume_m3) %>% 
-    mutate(pm_pct_diff_conc_logged_local = ((pm_ug_m3 - pm_ug_m3_local_rt_vol) / pm_ug_m3) * 100,
+    mutate(pm_pct_diff_conc_logged_samp = ((pm_ug_m3 - pm_ug_m3_samp_vol) / pm_ug_m3) * 100,
+           pm_pct_diff_conc_logged_local = ((pm_ug_m3 - pm_ug_m3_local_rt_vol) / pm_ug_m3) * 100,
            pm_pct_diff_conc_logged_utc = ((pm_ug_m3 - pm_ug_m3_utc_rt_vol) / pm_ug_m3) * 100) %>% 
     
     #' flag if percent difference exceeds 5%
-    mutate(pm_pct_diff_conc_local_flag = ifelse(abs(pm_pct_diff_conc_logged_local) > 5, 1, 0),
+    mutate(pm_pct_diff_conc_samp_flag = ifelse(abs(pm_pct_diff_conc_logged_samp) > 5, 1, 0),
+           pm_pct_diff_conc_local_flag = ifelse(abs(pm_pct_diff_conc_logged_local) > 5, 1, 0),
            pm_pct_diff_conc_utc_flag = ifelse(abs(pm_pct_diff_conc_logged_local) > 5, 1, 0))
 
   print(table(filter_data_sf$negative_pm_mass))
   print(table(filter_data_sf$potential_contamination))
+  print(table(filter_data_sf$pm_pct_diff_conc_samp_flag))
   print(table(filter_data_sf$pm_pct_diff_conc_local_flag))
   print(table(filter_data_sf$pm_pct_diff_conc_utc_flag))
   
