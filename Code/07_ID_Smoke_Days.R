@@ -1,7 +1,7 @@
 #' -----------------------------------------------------------------------------
 #' Project: ECHO Aim 1 ST Prediction Model for Black Carbon
 #' Task: Identify "smoke impacted" days
-#' Date created: Date Created: November 19, 2018
+#' Date Created: November 19, 2018
 #' Author: Sheena Martenies
 #' Contact: smarte4@illinois.edu
 #' -----------------------------------------------------------------------------

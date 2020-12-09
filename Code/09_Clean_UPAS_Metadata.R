@@ -1,8 +1,9 @@
 #' =============================================================================
-#' Project: ECHO LUR
+#' Project: ECHO Aim 1 ST Prediction Model for Black Carbon
+#' Task: Clean UPAS meta data
 #' Date created: November 26, 2018
 #' Author: Sheena Martenies
-#' Contact: Sheena.Martenies@colostate.edu
+#' Contact: smarte4@illinois.edu
 #' 
 #' Description: Summarizing location data for each filter and geocoding the 
 #' participant addresses
@@ -26,7 +27,7 @@ register_google(key = google_api_key)
 #' For ggplots
 simple_theme <- theme(
   #aspect.ratio = 1,
-  text  = element_text(family="Calibri",size = 12, color = 'black'),
+  text  = element_text(size = 12, color = 'black'),
   panel.spacing.y = unit(0,"cm"),
   panel.spacing.x = unit(0.25, "lines"),
   panel.grid.minor = element_line(color = "transparent"),
@@ -39,12 +40,11 @@ simple_theme <- theme(
   plot.margin=grid::unit(c(0,0,0,0), "mm"),
   legend.key = element_blank()
 )
-windowsFonts(Calibri=windowsFont("TT Calibri"))
 options(scipen = 9999) #avoid scientific notation
 
 map_theme <- theme(
   #aspect.ratio = 1,
-  text  = element_text(family="Calibri",size = 12, color = 'black'),
+  text  = element_text(size = 12, color = 'black'),
   panel.spacing.y = unit(0,"cm"),
   panel.spacing.x = unit(0.25, "lines"),
   panel.grid.minor = element_line(color = "transparent"),
@@ -57,17 +57,15 @@ map_theme <- theme(
   plot.margin=grid::unit(c(0,0,0,0), "mm"),
   legend.key = element_blank()
 )
-windowsFonts(Calibri=windowsFont("TT Calibri"))
 options(scipen = 9999) #avoid scientific notation
 
 albers <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
 ll_nad83 <- "+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0"
 ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
 
-
 #' -----------------------------------------------------------------------------
 #' Cleaning up the campaign location data and subsetting the collocated monitors
-#' Geocoding addresses
+#' Geocoding participant addresses
 #' Creating the sf object
 #' Mapping sampling locations
 #' -----------------------------------------------------------------------------
@@ -81,42 +79,42 @@ campaign_locations <- read_csv(here::here("Data/Filter_Data",
                            Location)) %>% 
   mutate(Location = ifelse(Location == "4872 Dearborn St., Dearborn, CO 80239",
                            "4872 Dearborn St., Denver, CO 80239",
-                           Location)) %>% 
+                           Location))
   
-  #' Fix Community Locations
-  mutate(Details_GPS = ifelse(Location == "Cherry Creek State Park West (218a)" & 
-                                campaign == "Campaign1", 
-                              "39.6303019, -104.85968", Details_GPS)) %>% 
-  mutate(Details_GPS = ifelse(Location == "Cherry Creek State Park East (217a)" & 
-                                campaign == "Campaign1", 
-                              "39.6317924, -104.8356315", Details_GPS)) %>% 
-  mutate(Details_GPS = ifelse(Location == "Discovery Park (203a)" &
-                                campaign == "Campaign1",
-                              "39.7671419, -105.108995", Details_GPS)) %>% 
-  mutate(Details_GPS = ifelse(Location == "Heron Pond/ Heller Open Space" &
-                                campaign == "Campaign1",
-                              "39.792604, -104.97219", Details_GPS)) %>% 
-  mutate(Location = ifelse(Location == "Heron Pond/ Heller Open Space",
-                           "Heron Pond/Heller Open Space",
-                           Location)) %>% 
-  mutate(Details_GPS = ifelse(Location == "Bear Valley Park" &
-                              campaign == "Campaign1",
-                              "39.660873, -105.07577", Details_GPS)) %>% 
-  mutate(Details_GPS = ifelse(Location == "Bowles Grove Park" &
-                                campaign == "Campaign1",
-                              "39.6143391, -105.0287366", Details_GPS)) %>% 
-  mutate(Details_GPS = ifelse(Location == "deKoevend Park" &
-                                campaign == "Campaign1",
-                              "39.59865, -104.9583136", Details_GPS)) %>% 
-  mutate(Details_GPS = ifelse(Location == "Johnson Park (207a)" &
-                                campaign == "Campaign1",
-                              "39.7835858, -105.0830168", Details_GPS)) %>% 
-  mutate(Details_GPS = ifelse(Location == "Speer Blvd Park (214a)" &
-                                campaign == "Campaign1",
-                              "39.7511608, -105.0053618", Details_GPS)) %>%
-  mutate(Details_GPS = ifelse(Location == "Standley Lake North Open Space Park (204a)" &
-                                campaign == "Campaign1",
-                              "39.8737971, -105.1294784", Details_GPS))
+  #' #' Fix Community Locations
+  #' mutate(Details_GPS = ifelse(Location == "Cherry Creek State Park West (218a)" & 
+  #'                               campaign == "Campaign1", 
+  #'                             "39.6303019, -104.85968", Details_GPS)) %>% 
+  #' mutate(Details_GPS = ifelse(Location == "Cherry Creek State Park East (217a)" & 
+  #'                               campaign == "Campaign1", 
+  #'                             "39.6317924, -104.8356315", Details_GPS)) %>% 
+  #' mutate(Details_GPS = ifelse(Location == "Discovery Park (203a)" &
+  #'                               campaign == "Campaign1",
+  #'                             "39.7671419, -105.108995", Details_GPS)) %>% 
+  #' mutate(Details_GPS = ifelse(Location == "Heron Pond/ Heller Open Space" &
+  #'                               campaign == "Campaign1",
+  #'                             "39.792604, -104.97219", Details_GPS)) %>% 
+  #' mutate(Location = ifelse(Location == "Heron Pond/ Heller Open Space",
+  #'                          "Heron Pond/Heller Open Space",
+  #'                          Location)) %>% 
+  #' mutate(Details_GPS = ifelse(Location == "Bear Valley Park" &
+  #'                             campaign == "Campaign1",
+  #'                             "39.660873, -105.07577", Details_GPS)) %>% 
+  #' mutate(Details_GPS = ifelse(Location == "Bowles Grove Park" &
+  #'                               campaign == "Campaign1",
+  #'                             "39.6143391, -105.0287366", Details_GPS)) %>% 
+  #' mutate(Details_GPS = ifelse(Location == "deKoevend Park" &
+  #'                               campaign == "Campaign1",
+  #'                             "39.59865, -104.9583136", Details_GPS)) %>% 
+  #' mutate(Details_GPS = ifelse(Location == "Johnson Park (207a)" &
+  #'                               campaign == "Campaign1",
+  #'                             "39.7835858, -105.0830168", Details_GPS)) %>% 
+  #' mutate(Details_GPS = ifelse(Location == "Speer Blvd Park (214a)" &
+  #'                               campaign == "Campaign1",
+  #'                             "39.7511608, -105.0053618", Details_GPS)) %>%
+  #' mutate(Details_GPS = ifelse(Location == "Standley Lake North Open Space Park (204a)" &
+  #'                               campaign == "Campaign1",
+  #'                             "39.8737971, -105.1294784", Details_GPS))
   
 #' Comfirm there's only one "Details_GPS" value per Location value
 gps_check <- select(campaign_locations, Details_GPS, Location) %>% 

@@ -28,6 +28,10 @@
 /Figs
 /Presentations
 
+#' Scripts with PHI'
+/Code/08_Scrape_UPAS_Metadata.R
+/Code/09_Clean_UPAS_Metadata.R
+
 # produced vignettes
 vignettes/*.html
 vignettes/*.pdf
