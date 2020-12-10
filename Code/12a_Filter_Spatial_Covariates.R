@@ -1,12 +1,13 @@
 #' =============================================================================
-#' Project: ECHO LUR
-#' Date created: December 14, 2018
+#' Project: ECHO Aim 1 ST Prediction Model for Black Carbon
+#' Task: Spatial predictors at sampling sites
+#' Date created: Date created: December 14, 2018
 #' Author: Sheena Martenies
-#' Contact: Sheena.Martenies@colostate.edu
+#' Contact: smarte4@illinois.edu
 #' 
 #' Description:
-#' This script summarizes the spatial covariates at each of the sampled 
-#' locations
+#' This script summarizes the spatial covariates at each of the sampling
+#' locations. Note that these variables are not time-varying
 #' =============================================================================
 
 library(sf)
@@ -99,8 +100,8 @@ ras_area <- function(sf_obj, ras_obj) {
 }
 
 vec_length <- function(sf_obj, covariate_obj) {
-  sf_sp_obj <- as(sf_obj, "Spatial")
-  cov_cropped <- tmaptools::crop_shape(covariate_obj, sf_sp_obj, polygon = T)
+  #cov_cropped <- st_crop(covariate_obj, sf_obj)
+  cov_cropped <- st_intersection(covariate_obj, sf_obj)
   length <- ifelse(nrow(cov_cropped) == 0, 0, 
                    sum(unclass(st_length(cov_cropped))))
   return(length)
@@ -129,16 +130,18 @@ my_if_else <- function(x) {
 
 #' -----------------------------------------------------------------------------
 #' Spatial covariates for each sampling location
+#' These are not time-varying, so we only need to get one set for each location
 #' -----------------------------------------------------------------------------
 
 locations_sf <- read_csv(here::here("Data/Filter_Data", "Filter_Locations_AEA.csv")) %>% 
   mutate(lon = as.numeric(lon), lat = as.numeric(lat)) %>% 
-  st_as_sf(wkt = "WKT", crs = albers)
+  st_as_sf(wkt = "WKT", crs = albers) 
 
-#' Use the 9th and Yuma location for the central site as well (co-located)
-central_sf <- filter(locations_sf, Location %in% "9th and Yuma") %>% 
+#' Use the 9th and Yuma location for the central site monitor as well (co-located)
+central_sf <- filter(locations_sf, Location == "9th and Yuma") %>% 
   slice(1) 
 central_sf$filter_id[1] <- "080310027"
+central_sf$campaign[1] <- "CampaignX"
 
 locations_sf <- rbind(locations_sf, central_sf)
 
@@ -148,7 +151,7 @@ print(sum(duplicated(locations_sf$filter_id)))
 
 #' ---------------------------------------------------------------------------
 #' For each point, summarize the land use characteristics within specific 
-#' buffers: 50m, 100 m, 250 m, 500 m, 1000 m, and 2500 m
+#' buffers: 50 m, 100 m, 250 m, 500 m, 1000 m, and 2500 m
 #' 
 #' Spatial covariates (within each buffer):
 #'     - Average elevation
@@ -156,20 +159,26 @@ print(sum(duplicated(locations_sf$filter_id)))
 #'     - Average percent impervious surface
 #'     - Most common land-use category (i.e., mode)
 #'     - Distance (in meters) to: airport, CAFOs, compost, highways, landfills, 
-#'       major roads, military installations, mines, npl sites, O&G wells, 
+#'       major roads, military installations, mines, NPL sites, O&G wells, 
 #'       parks, rail, and waste water treatment plants
 #'     - Average population density and weighted population count
 #'     - Length of highways and major roads
 #'     - Average AADT of intersecting road segments
 #' ---------------------------------------------------------------------------
 
+#' Unique locations
+unique_locations <- select(locations_sf, site_id) %>%
+  distinct(site_id)
+
+nrow(unique_locations)
+
 # Empty data frame for covariates
 covariates <- data.frame()
 
-for (i in 1:nrow(locations_sf)) {
+for (i in 1:nrow(unique_locations)) {
 # for (i in 1:5) {
-  print(paste("Location", i, "of", nrow(locations_sf)))
-  point <- slice(locations_sf, i)
+  print(paste("Location", i, "of", nrow(unique_locations)))
+  point <- slice(unique_locations, i)
   
   pt_50 <- st_buffer(point, dist = 50)
   pt_100 <- st_buffer(point, dist = 100)
@@ -179,7 +188,7 @@ for (i in 1:nrow(locations_sf)) {
   pt_2500 <- st_buffer(point, dist = 2500)
   
   #' average elevation 
-  cov_temp <- data.frame(filter_id = point$filter_id,
+  cov_temp <- data.frame(site_id = point$site_id,
                          elevation_50 = ras_cov(pt_50, elevation, mean),
                          elevation_100 = ras_cov(pt_100, elevation, mean),
                          elevation_250 = ras_cov(pt_250, elevation, mean),
@@ -253,7 +262,7 @@ for (i in 1:nrow(locations_sf)) {
            ag_1000 = ras_area(pt_1000, ag_land),
            ag_2500 = ras_area(pt_2500, ag_land))
   
-  #' average population density (n/km2) and populaton count (n)
+  #' average population density (n/km2) and population count (n)
   cov_temp <- cov_temp %>% 
     mutate(pop_den_50 = ras_cov(pt_50, pop_density, mean),
            pop_den_100 = ras_cov(pt_100, pop_density, mean),
@@ -316,8 +325,8 @@ for (i in 1:nrow(locations_sf)) {
   covariates <- bind_rows(covariates, cov_temp)
 }
 
-loc_covariates <- left_join(locations_sf, covariates, by = "filter_id") %>%
-  dplyr::select(filter_id, campaign, elevation_50:aadt_2500)
+loc_covariates <- left_join(locations_sf, covariates, by = "site_id") %>%
+  dplyr::select(filter_id, site_id, campaign, elevation_50:aadt_2500)
 print(sum(duplicated(loc_covariates$filter_id)))
 
 # loc_covariates2 <- left_join(central_sf, covariates, by = "filter_id") %>%
