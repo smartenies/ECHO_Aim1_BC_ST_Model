@@ -22,6 +22,7 @@
 
 # Data folders and publication materials
 /Data
+/Data_Old
 /Raw_Data
 /Secondary_Data
 /Manuscripts
