@@ -23,9 +23,23 @@ epa_monitors <- read_csv(here::here("Secondary_Data", "EPA_Air_Quality_System_Da
                                     "aqs_monitors.csv")) 
 colnames(epa_monitors) <- gsub(" ", "_", colnames(epa_monitors))
 
-co_monitors <- filter(epa_monitors, State_Code == "08")
+co_monitors <- filter(epa_monitors, State_Code == "08") %>%
+  mutate(County_Code = str_pad(County_Code, width = 3, side = "left", pad = "0"),
+         Site_Num = str_pad(Site_Number, width = 4, side = "left", pad = "0")) %>% 
+  mutate(monitor_id = paste0(State_Code, County_Code, Site_Number))
+
+glimpse(co_monitors)
 write_csv(co_monitors, here::here("Secondary_Data", "EPA_Air_Quality_System_Data",
                                   "colorado_monitors.csv"))
+
+co_coords <- select(co_monitors, monitor_id, Longitude, Latitude) %>%
+  distinct()
+
+cdphe_mon <- read_csv(here::here("Secondary_Data/CDPHE_Air_Quality_Data", 
+                                 "CDPHE_Monitors.csv")) %>%
+  select(-lon, -lat)
+
+cdphe_mon <- left_join(cdphe_mon, co_coords, by = "monitor_id")
 
 #' -----------------------------------------------------------------------------
 #' First, read in the daily PM2.5 and simplify the data sets
@@ -56,10 +70,6 @@ glimpse(aqs_data)
 #' Next, get the CDPHE data in similar shape
 #' Need to summarize hourly data to daily mean
 #' -----------------------------------------------------------------------------
-
-cdphe_mon <- read_csv(here::here("Secondary_Data/CDPHE_Air_Quality_Data", 
-                                 "CDPHE_Monitors.csv")) %>%
-  rename(Longitude = "lon", Latitude = "lat")
 
 pol <- "88101"
 cdphe_data <- read_csv(here::here("Secondary_Data/CDPHE_Air_Quality_Data", 
@@ -153,10 +163,6 @@ glimpse(aqs_data)
 #' Next, get the CDPHE data in similar shape
 #' Need to summarize hourly data to daily mean
 #' -----------------------------------------------------------------------------
-
-cdphe_mon <- read_csv(here::here("Secondary_Data/CDPHE_Air_Quality_Data", 
-                                 "CDPHE_Monitors.csv")) %>%
-  rename(Longitude = "lon", Latitude = "lat")
 
 pol <- "42602"
 cdphe_data <- read_csv(here::here("Secondary_Data/CDPHE_Air_Quality_Data", 
@@ -252,47 +258,54 @@ for (i in 1:length(file_list)) {
   rm(temp)
 }
 
-#' #' -----------------------------------------------------------------------------
-#' #' Next, get the CDPHE data in similar shape
-#' #' Only using the monitor at Yuma due to it's long term record
-#' #' Site information from the 2018 Montior Network Plan
-#' #' https://www.colorado.gov/airquality/tech_doc_repository.aspx?action=open&file=2018AnnualNetworkPlan.pdf
-#' #' 
-#' #' These data have to be obtained directly from CDPHE
-#' #' Brad Rink (CDPHE, bradley.rink@state.co.us) has been amazingly helpful in
-#' #' getting these data for us
-#' #' -----------------------------------------------------------------------------
-#' 
-#' yuma_id <- "080310027"
-#' yuma_lon <- -105.015317
-#' yuma_lat <- 39.732146
-#' 
-#' pol <- 88313
-#' cdphe_data <- read_csv(here::here("Data/CDPHE_Aeth_Data", 
-#'                                   "Yuma_st_Aeth_Combined.csv")) %>% 
-#'   mutate(Date_Local = as.Date(Samp_date, format = "%m/%d/%Y"),
-#'          hour_MST = Samp_time,
-#'          monitor_id = yuma_id,
-#'          Parameter_Code = pol)
-#' 
-#' bc_dates <- seq.Date(from = aqs_data$Date_Local[nrow(aqs_data)] + 1, 
-#'                      to = cdphe_data$Date_Local[nrow(cdphe_data)],
-#'                      by = "day")
-#' 
-#' #' Assign some additional parameters, including a POC code of 1
-#' cdphe_means <- cdphe_data %>% 
-#'   group_by(monitor_id, Parameter_Code, Date_Local) %>%
-#'   dplyr::summarize(Arithmetic_Mean = mean(BC_880_nm, na.rm = T),
-#'                    Max_Value = max(BC_880_nm, na.rm = T)) %>% 
-#'   mutate(Units_of_Measure = "Micrograms/cubic meter (LC)",
-#'          Arithmetic_Mean = ifelse(is.nan(Arithmetic_Mean), NA, Arithmetic_Mean),
-#'          Max_Value = ifelse(is.infinite(Max_Value), NA, Max_Value),
-#'          POC = 1) %>% 
-#'   ungroup() %>% 
-#'   
-#'   #' add coordinates
-#'   mutate(Longitude = yuma_lon, Latitude = yuma_lat)
-#' 
+#' -----------------------------------------------------------------------------
+#' Next, get the CDPHE data in similar shape
+#' Only using the monitor at Yuma due to it's long term record
+#' Site information from the 2018 Montior Network Plan
+#' https://www.colorado.gov/airquality/tech_doc_repository.aspx?action=open&file=2018AnnualNetworkPlan.pdf
+#'
+#' These data have to be obtained directly from CDPHE
+#' Brad Rink (bradley.rink@state.co.us) and John Olasin (mailto:john.olasin@state.co.us)
+#' have been amazingly helpful in getting these data for us
+#' -----------------------------------------------------------------------------
+
+yuma_location <- "I25DEN"
+
+pol <- 88313
+cdphe_data <- read_excel(here::here("Secondary_Data/CDPHE_Air_Quality_Data",
+                                    "Aeth_2020.xlsx"))
+colnames(cdphe_data) <- gsub(" ", "_", tolower(colnames(cdphe_data)))
+  
+cdphe_data <- cdphe_data %>%
+  mutate(Date_Local = as.Date(date, format = "%Y%m%d"),
+         hour_MST = start_time,
+         monitor_loc = yuma_location,
+         Parameter_Code = pol) %>%
+  rename("one_hr_conc" = "880nm_value") %>%
+  mutate(one_hr_conc = as.numeric(one_hr_conc)) %>%
+  select(Date_Local, hour_MST, monitor_loc, Parameter_Code, one_hr_conc) %>%
+  
+  #' summarize to daily means
+  #' #' Assign a POC code of 1
+  group_by(monitor_loc, Parameter_Code, Date_Local) %>%
+  dplyr::summarize(Arithmetic_Mean = mean(one_hr_conc, na.rm = T),
+                   Max_Value = max(one_hr_conc, na.rm = T)) %>%
+  mutate(Units_of_Measure = "Micrograms/cubic meter (LC)",
+         Arithmetic_Mean = ifelse(is.nan(Arithmetic_Mean), NA, Arithmetic_Mean),
+         Max_Value = ifelse(is.infinite(Max_Value), NA, Max_Value),
+         Sample_Duration = "1 HOUR",
+         POC = 1) %>%
+  
+  #' make Date_Local a vector of dates
+  mutate(Date_Local = as.Date(Date_Local, format = "%m%d%Y")) %>%
+  ungroup()
+
+#' add monitor IDs and coordinates
+cdphe_means <- left_join(cdphe_data, cdphe_mon, by = "monitor_loc")
+cdphe_means <- select(cdphe_means, -c(monitor_info, monitor_loc))
+
+glimpse(cdphe_means)
+
 #' -----------------------------------------------------------------------------
 #' Fill in missing AQS data with CDPHE data
 #' -----------------------------------------------------------------------------

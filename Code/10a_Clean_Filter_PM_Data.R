@@ -103,7 +103,7 @@ for(camp in 1:length(campaign_names)) {
     st_as_sf(wkt = "WKT", crs = albers)
 
   filter_data_sf <- left_join(filter_vol_data, locations, by = c("filter_id", "campaign")) %>% 
-    select(-c(Location, geocode_add)) %>%
+    select(-c(Location)) %>%
     distinct()
   glimpse(filter_data_sf)
   
@@ -217,25 +217,25 @@ for(camp in 1:length(campaign_names)) {
   filter_data_sf <- filter_data_sf %>% 
     
     #' flag negative concentrations
-    #' flag masses exceeding 1000 ug as potenitally contaminated -- arbitrary!
+    #' flag masses exceeding 1000 ug as potentially contaminated -- arbitrary!
     mutate(negative_pm_mass = ifelse(pm_mass_ug < 0, 1, 0),
            potential_contamination = ifelse(pm_mass_ug > 1000, 1, 0)) %>% 
     
-    #' calculate TWA
-    #' three different concentrations calculated using sampled volumes based on 
-    #' the run time logged by the UPAS (the favored concentration) and volumes
-    #' based on the run times calculated from the UTC and Local timestamps.
+    #' calculate TWA using Sampled Volume (convert L to m3)
+    #' Also include three different concentrations calculated using sampled 
+    #' volumes based on the run time logged by the UPAS  and volumes
+    #' based on the run times calculated from the UTC and Local time stamps.
     #' There should not be too much of a difference in these concentrations.
-    mutate(pm_ug_m3 = pm_mass_ug / logged_rt_volume_m3,
-           pm_ug_m3_samp_vol = pm_mass_ug / (SampledVolume/10^3),
+    mutate(pm_ug_m3 = pm_mass_ug / (SampledVolume/10^3),
+           pm_ug_m3_logged_rt_vol = pm_mass_ug / logged_rt_volume_m3,
            pm_ug_m3_local_rt_vol = pm_mass_ug / local_rt_volume_m3,
            pm_ug_m3_utc_rt_vol = pm_mass_ug / utc_rt_volume_m3) %>% 
-    mutate(pm_pct_diff_conc_logged_samp = ((pm_ug_m3 - pm_ug_m3_samp_vol) / pm_ug_m3) * 100,
-           pm_pct_diff_conc_logged_local = ((pm_ug_m3 - pm_ug_m3_local_rt_vol) / pm_ug_m3) * 100,
-           pm_pct_diff_conc_logged_utc = ((pm_ug_m3 - pm_ug_m3_utc_rt_vol) / pm_ug_m3) * 100) %>% 
+    mutate(pm_pct_diff_conc_sampled_logged = ((pm_ug_m3 - pm_ug_m3_logged_rt_vol) / pm_ug_m3) * 100,
+           pm_pct_diff_conc_logged_local = ((pm_ug_m3_logged_rt_vol - pm_ug_m3_local_rt_vol) / pm_ug_m3_logged_rt_vol) * 100,
+           pm_pct_diff_conc_logged_utc = ((pm_ug_m3_logged_rt_vol - pm_ug_m3_utc_rt_vol) / pm_ug_m3_logged_rt_vol) * 100) %>% 
     
     #' flag if percent difference exceeds 5%
-    mutate(pm_pct_diff_conc_samp_flag = ifelse(abs(pm_pct_diff_conc_logged_samp) > 5, 1, 0),
+    mutate(pm_pct_diff_conc_samp_flag = ifelse(abs(pm_pct_diff_conc_sampled_logged) > 5, 1, 0),
            pm_pct_diff_conc_local_flag = ifelse(abs(pm_pct_diff_conc_logged_local) > 5, 1, 0),
            pm_pct_diff_conc_utc_flag = ifelse(abs(pm_pct_diff_conc_logged_local) > 5, 1, 0))
 

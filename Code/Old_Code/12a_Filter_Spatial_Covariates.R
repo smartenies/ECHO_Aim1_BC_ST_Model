@@ -325,10 +325,8 @@ for (i in 1:nrow(unique_locations)) {
   covariates <- bind_rows(covariates, cov_temp)
 }
 
-glimpse(covariates)
-
 loc_covariates <- left_join(locations_sf, covariates, by = "site_id") %>%
-  dplyr::select(campaign, filter_id, site_id, lon, lat, elevation_50:aadt_2500)
+  dplyr::select(filter_id, site_id, campaign, elevation_50:aadt_2500)
 print(sum(duplicated(loc_covariates$filter_id)))
 
 # loc_covariates2 <- left_join(central_sf, covariates, by = "filter_id") %>%
