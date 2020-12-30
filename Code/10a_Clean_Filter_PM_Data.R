@@ -226,18 +226,10 @@ for(camp in 1:length(campaign_names)) {
     #' volumes based on the run time logged by the UPAS  and volumes
     #' based on the run times calculated from the UTC and Local time stamps.
     #' There should not be too much of a difference in these concentrations.
-    mutate(pm_ug_m3 = pm_mass_ug / (SampledVolume/10^3),
-           pm_ug_m3_logged_rt_vol = pm_mass_ug / logged_rt_volume_m3,
+    mutate(pm_ug_m3_logged_vol = pm_mass_ug / logged_rt_volume_m3, 
+           pm_ug_m3_sampled_vol = pm_mass_ug / (SampledVolume/10^3),
            pm_ug_m3_local_rt_vol = pm_mass_ug / local_rt_volume_m3,
-           pm_ug_m3_utc_rt_vol = pm_mass_ug / utc_rt_volume_m3) %>% 
-    mutate(pm_pct_diff_conc_sampled_logged = ((pm_ug_m3 - pm_ug_m3_logged_rt_vol) / pm_ug_m3) * 100,
-           pm_pct_diff_conc_logged_local = ((pm_ug_m3_logged_rt_vol - pm_ug_m3_local_rt_vol) / pm_ug_m3_logged_rt_vol) * 100,
-           pm_pct_diff_conc_logged_utc = ((pm_ug_m3_logged_rt_vol - pm_ug_m3_utc_rt_vol) / pm_ug_m3_logged_rt_vol) * 100) %>% 
-    
-    #' flag if percent difference exceeds 5%
-    mutate(pm_pct_diff_conc_samp_flag = ifelse(abs(pm_pct_diff_conc_sampled_logged) > 5, 1, 0),
-           pm_pct_diff_conc_local_flag = ifelse(abs(pm_pct_diff_conc_logged_local) > 5, 1, 0),
-           pm_pct_diff_conc_utc_flag = ifelse(abs(pm_pct_diff_conc_logged_local) > 5, 1, 0))
+           pm_ug_m3_utc_rt_vol = pm_mass_ug / utc_rt_volume_m3) 
 
   print(table(filter_data_sf$negative_pm_mass))
   print(table(filter_data_sf$potential_contamination))

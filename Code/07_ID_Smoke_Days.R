@@ -38,9 +38,9 @@ ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
 albers <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
 
 #' -----------------------------------------------------------------------------
-#' 1) Calculate long-term (2009-2020) averages by month and monitor
+#' 1) Calculate long-term (2009-2019) averages by month and monitor
 
-years <- c(2009:2020)
+years <- c(2009:2019)
 time_zone <- "America/Denver"
 
 #' read in all data, summarize to long-term monthly averages
@@ -52,10 +52,11 @@ monitor_sp_data <- unique(monitor_sp_data)
 monitor_data <- monitor_data %>% 
   st_as_sf(wkt = "WKT", crs = albers) %>% 
   mutate(month = month(Date_Local),
-         year = year(Date_Local)) %>% 
-  filter(year %in% years)
+         year = year(Date_Local)) 
 
-monitor_means <- monitor_data %>% 
+monitor_data_10yr <- filter(monitor_data, year %in% years)
+
+monitor_means <- monitor_data_10yr %>% 
   group_by(monitor_id, month) %>% 
   summarize(monthly_mean = mean(Arithmetic_Mean, na.rm=T),
             monthly_sd = sd(Arithmetic_Mean, na.rm=T))

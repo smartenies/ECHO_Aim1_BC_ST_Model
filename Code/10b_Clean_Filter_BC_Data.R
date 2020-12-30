@@ -248,14 +248,11 @@ for (camp in 1:length(campaign_names)) {
     #' volumes based on the run time logged by the UPAS  and volumes
     #' based on the run times calculated from the UTC and Local time stamps.
     #' There should not be too much of a difference in these concentrations.
-    mutate(bc_ug_m3_uncorrected = bc_mass_ug / (SampledVolume/10^3),
-           bc_ug_m3 = bc_mass_ug_corrected / (SampledVolume/10^3),
-           bc_ug_m3_logged_rt_vol = bc_mass_ug_corrected / logged_rt_volume_m3,
+    mutate(bc_ug_m3_uncorrected = bc_mass_ug / logged_rt_volume_m3,
+           bc_ug_m3_logged_vol = bc_mass_ug_corrected / logged_rt_volume_m3,
+           bc_ug_m3_sampled_vol = bc_mass_ug_corrected / (SampledVolume/10^3),
            bc_ug_m3_local_rt_vol = bc_mass_ug_corrected / local_rt_volume_m3,
            bc_ug_m3_utc_rt_vol = bc_mass_ug_corrected / utc_rt_volume_m3) %>% 
-    mutate(bc_pct_diff_conc_sampled_logged = ((bc_ug_m3 - bc_ug_m3_logged_rt_vol) / bc_ug_m3) * 100,
-           bc_pct_diff_conc_logged_local = ((bc_ug_m3_logged_rt_vol - bc_ug_m3_local_rt_vol) / bc_ug_m3_logged_rt_vol) * 100,
-           bc_pct_diff_conc_logged_utc = ((bc_ug_m3_logged_rt_vol - bc_ug_m3_utc_rt_vol) / bc_ug_m3_logged_rt_vol) * 100) %>% 
              
     #' flag if blank corrected
     #' flag if the original BC mass was negative

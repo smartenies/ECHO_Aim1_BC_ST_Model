@@ -70,10 +70,11 @@ no2_data <- read_csv(here::here("Data", "Monitor_NO2_Data_AEA.csv")) %>%
 
 #' Smoke days
 smoke_data <- read_csv(here::here("Data", "Monitor_Smoke_Days_AEA.csv")) %>%
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
   filter(!is.na(smoke_day_1sd)) %>% 
   filter(!is.na(monitor_id)) %>%
   st_as_sf(wkt = "WKT", crs = albers) %>%
-  filter(County_Code %in% counties) %>% 
+  #filter(County_Code %in% counties) %>% 
   arrange(Date_Local, monitor_id)
 
 #' -----------------------------------------------------------------------------
@@ -108,8 +109,6 @@ print(sum(duplicated(locations_sf$filter_id)))
 unique_locations <- select(locations_sf, site_id) %>%
   distinct(site_id)
 
-
-
 #' -----------------------------------------------------------------------------
 #' For each filter, summarize the following:
 #'     - PM, BC, NO2 and Temp of the closest monitor (nn)
@@ -121,12 +120,12 @@ unique_locations <- select(locations_sf, site_id) %>%
 #' -----------------------------------------------------------------------------
 
 # filter_ids <- unique(locations_sf$filter_id)
-filter_ids <- locations_sf2$site_id
+filter_ids <- unique_locations$site_id
 
 #' List of dates 
 #' Use start of the week as the "indicator" date
 date_start <- as.Date("01/01/2009", format = "%m/%d/%Y")
-date_end <- locations_all$EndDateLocal[nrow(locations_all)]
+date_end <- as.Date("12/31/2020", format = "%m/%d/%Y")
 date_list_all <- seq.Date(date_start, date_end, by = "day")
 date_list <- unique(as.Date(cut(as.Date(date_list_all), "week")))
 
@@ -134,8 +133,8 @@ cov_temp <- data.frame()
 
 for (i in 1:length(filter_ids)) {
   print(paste("Location", i, "of", length(filter_ids)))
-  # point <- filter(locations_sf, filter_id == filter_ids[i])
-  point <- filter(locations_sf2, site_id == filter_ids[i])
+  #point <- filter(locations_sf, filter_id == filter_ids[i])
+  point <- filter(unique_locations, site_id == filter_ids[i])
   
   temp <- data.frame()
   
@@ -218,10 +217,12 @@ for (i in 1:length(filter_ids)) {
       
       rm(cov_df, cov_week)
     }
+    
     #' Now add smoke days
     smoke_week <- filter(smoke_data,  Date_Local %in% date_seq)
+    smoke_days_area <-  filter(smoke_week, County_Code %in% counties)
     
-    if(nrow(smoke_week) > 0) {
+    if(nrow(smoke_week) > 0 & nrow(smoke_days_area) > 0) {
       smoke_week <- smoke_week %>% 
         #' st_distance calculates distance between points
         #' because we only have one point in point, the returned matrix
@@ -232,6 +233,7 @@ for (i in 1:length(filter_ids)) {
         arrange(distance)
       
       smoke_days_area <-  smoke_week %>% 
+        filter(County_Code %in% counties) %>%
         summarize(smoke_day_1sd = ifelse(any(smoke_day_1sd == 1), 1, 0),
                   smoke_day_2sd = ifelse(any(smoke_day_2sd == 1), 1, 0))
       
@@ -262,7 +264,7 @@ for (i in 1:length(filter_ids)) {
       temp2$area_smoke_2sd <- smoke_days_area$smoke_day_2sd[1]
       temp2$units_smoke <- "yes=1/no=0"
       
-      rm(smoke_rankings, smoke_ranked, smoke_days_area, smoke_days_nn, smoke_days_nn3)
+      rm(smoke_rankings, smoke_ranked, smoke_days_nn, smoke_days_nn3)
       
     } else {
       temp2$nn_smoke_1sd <- NA
@@ -275,7 +277,7 @@ for (i in 1:length(filter_ids)) {
     } 
     
     temp <- bind_rows(temp, temp2)
-    rm(smoke_week, temp2)
+    rm(smoke_week, smoke_week_area, temp2)
   }
   
   cov_temp <- bind_rows(cov_temp, temp)
@@ -284,14 +286,17 @@ for (i in 1:length(filter_ids)) {
 
 glimpse(cov_temp)
 
-locations_cov <- full_join(locations_sf, cov_temp, by = "site_id") %>% 
-  dplyr::select(filter_id, campaign, StartDateLocal, EndDateLocal, site_id, 
-                week, nn_pm:units_smoke) %>% 
-  select(-c(area_bc:idw_bc)) %>% 
+covariates_file_name1 <- paste0("ST_Covariates_Sites_AEA.csv")
+st_write(cov_temp, dsn = here::here("Data", covariates_file_name1),
+         delete_dsn = T, layer_options = "GEOMETRY=AS_WKT")
+
+locations_cov <- left_join(cov_temp, locations_sf, by = "site_id") %>%
+  dplyr::select(filter_id, campaign, site_id, st_week = week, nn_pm:units_smoke) %>%
+  select(-c(area_bc:idw_bc)) %>%
   mutate(filter_id = ifelse(str_detect(filter_id, "080310027"), "080310027",
                             filter_id))
 
-covariates_file_name <- paste0("ST_Covariates_Filters_AEA.csv")
-st_write(locations_cov, dsn = here::here("Data", covariates_file_name),
+covariates_file_name2 <- paste0("ST_Covariates_Filters_AEA.csv")
+st_write(locations_cov, dsn = here::here("Data", covariates_file_name2),
          delete_dsn = T, layer_options = "GEOMETRY=AS_WKT")
 
