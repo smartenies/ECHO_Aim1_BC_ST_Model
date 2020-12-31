@@ -17,6 +17,9 @@ library(readxl)
 library(rvest)
 library(Hmisc)
 
+if(!dir.exists(here::here("Data"))) dir.create(here::here("Data"))
+if(!dir.exists(here::here("Data/Temp"))) dir.create(here::here("Data/Temp"))
+
 years <- c(2009:2020)
 met_vars <- c("WIND", "PRESS", "TEMP", "RH_DP")
 
@@ -76,7 +79,7 @@ for (i in 1:length(years)) {
 #' from CDPHE website, since AQS data is delayed by at least a quarter
 #' -----------------------------------------------------------------------------
 
-start_date <- as.Date("2020-01-01")
+start_date <- as.Date("2016-01-01")
 end_date <- Sys.Date()
 dates <- seq(start_date, end_date, by="1 day")
 dates <- format(dates, "%m%d%Y")
@@ -94,8 +97,11 @@ dates <- format(dates, "%m%d%Y")
 #' 62201: Relative Humidity
 #' 61101: Wind Speed
 
-pc_list <- c(88101, 44201, 42602, 62101, 62201, 61101)
-pc_names <- c("88101", "44201", "42602", "TEMP", "RH_DP", "WIND")
+# pc_list <- c(88101, 44201, 42602, 62101, 62201, 61101)
+# pc_names <- c("88101", "44201", "42602", "TEMP", "RH_DP", "WIND")
+
+pc_list <- c(88101, 44201, 42602, 62101)
+pc_names <- c("88101", "44201", "42602", "TEMP")
 
 if(!dir.exists(here::here("Data"))) dir.create(here::here("Data"))
 if(!dir.exists(here::here("Data/Temp"))) dir.create(here::here("Data/Temp"))
@@ -112,56 +118,63 @@ for (pol in 1:length(pc_list)) {
                  "parametercode=", pc_list[pol], "&seeddate=", m, "%2f", d, "%2f", y,
                  "&export=False", sep="")
     
-    #' original HTML includes breaks that are not preserved by html_table
-    #' need to download the data, substitute the breaks, and then get the data
-    #' See: https://stackoverflow.com/questions/30989543/r-scraping-an-html-
-    #' table-with-rvest-when-there-are-missing-tr-tags
+    try_dl <- tryCatch(
+      download.file(url, destfile = here::here("Data/Temp", "cdphe_temp.html")),
+      error = function(e) e
+    )
     
-    download.file(url, destfile = here::here("Data/Temp", "cdphe_temp.html"))
-    ap_html <- readChar(here::here("Data/Temp", "cdphe_temp.html"),
-                        file.info(here::here("Data/Temp", "cdphe_temp.html"))$size)
-    ap_html <- gsub("<br />", "_", ap_html)
-    ap_data <- read_html(ap_html)
-    
-    nodes <- html_nodes(ap_data, xpath = "//table")
-    table <- html_table(nodes)[[3]]
-    
-    #' Clean up the table
-    colnames(table) <- table[1,] #' column names are in first and last rows
-    table <- table[-c(1, nrow(table)-1, nrow(table)),] #' drop unnecessary rows
-    
-    #' For ozone, PM, and NO2 there is a "metric key" column because there are actually
-    #' two/three values reported for each monitor and hour (depending on pollutant)
-    #' you can either keep the multiple metrics (first block) or extract the 
-    #' 1-hour measurement (second block)
-    
-    #' keep all measurements for PM2.5, ozone, or NO2
-    # if(pc_names[pol] %in% c("88101", "44201")) {
-    #   colnames(table)[2] <- "metric_key"
-    # }
-    
-    #' Just keep the one-hour measurements (first of the three)
-    if(pc_names[pol] %in% c("88101", "44201", "42602")) {
-      table <- table[,-c(2)]
-      table_long <- pivot_longer(table, names_to = "monitor", values_to = "metrics", 
-                                 -c(contains("MST"))) %>%
-        mutate(metrics = as.list(str_split(metrics, "_"))) 
-      table_long$one_hr <- as.vector(as.numeric(lapply(table_long$metrics, `[[`, 1))) 
-      table <- pivot_wider(table_long, names_from = "monitor", values_from = "one_hr",
-                           contains("MST"))
-      rm(table_long)
+    if(!inherits(try_dl, "error")){
+      #' original HTML includes breaks that are not preserved by html_table
+      #' need to download the data, substitute the breaks, and then get the data
+      #' See: https://stackoverflow.com/questions/30989543/r-scraping-an-html-
+      #' table-with-rvest-when-there-are-missing-tr-tags
+      
+      download.file(url, destfile = here::here("Data/Temp", "cdphe_temp.html"))
+      ap_html <- readChar(here::here("Data/Temp", "cdphe_temp.html"),
+                          file.info(here::here("Data/Temp", "cdphe_temp.html"))$size)
+      ap_html <- gsub("<br />", "_", ap_html)
+      ap_data <- read_html(ap_html)
+      
+      nodes <- html_nodes(ap_data, xpath = "//table")
+      table <- html_table(nodes)[[3]]
+      
+      #' Clean up the table
+      colnames(table) <- table[1,] #' column names are in first and last rows
+      table <- table[-c(1, nrow(table)-1, nrow(table)),] #' drop unnecessary rows
+      
+      #' For ozone, PM, and NO2 there is a "metric key" column because there are actually
+      #' two/three values reported for each monitor and hour (depending on pollutant)
+      #' you can either keep the multiple metrics (first block) or extract the 
+      #' 1-hour measurement (second block)
+      
+      #' keep all measurements for PM2.5, ozone, or NO2
+      # if(pc_names[pol] %in% c("88101", "44201")) {
+      #   colnames(table)[2] <- "metric_key"
+      # }
+      
+      #' Just keep the one-hour measurements (first of the three)
+      if(pc_names[pol] %in% c("88101", "44201", "42602")) {
+        table <- table[,-c(2)]
+        table_long <- pivot_longer(table, names_to = "monitor", values_to = "metrics", 
+                                   -c(contains("MST"))) %>%
+          mutate(metrics = as.list(str_split(metrics, "_"))) 
+        table_long$one_hr <- as.vector(as.numeric(lapply(table_long$metrics, `[[`, 1))) 
+        table <- pivot_wider(table_long, names_from = "monitor", values_from = "one_hr",
+                             contains("MST"))
+        rm(table_long)
+      }
+      
+      #' adding a date stamp and a parameter code to match the EPA data sets
+      table$Date_Local <- dates[i]
+      table$Parameter_Code <- pc_list[pol]
+      
+      #' append to data frame
+      output <- bind_rows(output, table)
+      
+      print(dates[i])
+      rm(table)
+      file.remove(here::here("Data/Temp", "cdphe_temp.html"))
     }
-    
-    #' adding a date stamp and a parameter code to match the EPA data sets
-    table$Date_Local <- dates[i]
-    table$Parameter_Code <- pc_list[pol]
-    
-    #' append to data frame
-    output <- bind_rows(output, table)
-    
-    print(dates[i])
-    rm(table)
-    file.remove(here::here("Data/Temp", "cdphe_temp.html"))
   }
   
   #' remove symbols from the column names

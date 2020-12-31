@@ -1,15 +1,12 @@
 #' =============================================================================
-#' Project: ECHO LUR
+#' Project: ECHO Aim 1 ST Prediction Model for Black Carbon
+#' Task: Combining filter measurements, spatial covariates, and ST covariates
 #' Date created: January 18, 2019
 #' Author: Sheena Martenies
 #' Contact: Sheena.Martenies@colostate.edu
 #' 
-#' Description:
-#' This script combined the filter data, spatial covariates, and spatiotemporal
-#' covariates into a single dataset
-#' 
-#' Also saves an "archive" dataset with a date stamp in case we need to go back
-#' to anything
+#' Note: this script also saves an "archive" data set with a date stamp in case 
+#' we need to go back to anything
 #' =============================================================================
 
 library(sf)
@@ -36,50 +33,37 @@ today <- Sys.Date()
 #' Filter TWA data
 #' PM (uncalibrated)
 filter_pm_file_name <- paste0("Filter_PM.csv")
-filter_pm <- read_csv(here::here("Data", filter_pm_file_name)) %>% 
+filter_pm <- read_csv(here::here("Data", filter_pm_file_name)) %>%
   mutate(MonitorNumber = as.character(MonitorNumber),
-         indoor_monitor_id = as.character(indoor_monitor_id)) %>% 
+         indoor_monitor_id = as.character(indoor_monitor_id)) %>%
   select(-c(StartDateLocal, EndDateLocal))
 sum(duplicated(filter_pm$filter_id))
 table(filter_pm[which(duplicated(filter_pm$filter_id) ==T), "is_blank"])
-# View(filter(filter_pm, duplicated(filter_pm$filter_id)))
+#View(filter(filter_pm, duplicated(filter_pm$filter_id)))
 
 #' Add the calibrated PM data
 filter_pm_file_name2 <- paste0("Filter_PM_Calibrated.csv")
 filter_pm2 <- read_csv(here::here("Data", filter_pm_file_name2)) %>%
-  select(filter_id, campaign, pm_ug_m3_adjlm, pm_ug_m3_lm, pm_ug_m3_dem)
+  select(filter_id, campaign, pm_ug_m3_raw,
+         pm_ug_m3_lm, pm_ug_m3_lm_all, pm_ug_m3_dem, pm_ug_m3_dem_all)
 sum(duplicated(filter_pm2$filter_id))
 
 filter_pm <- left_join(filter_pm, filter_pm2, by =c("campaign", "filter_id"))
 
-#' BC (uncalibrated)
-filter_bc_file_name <- paste0("Filter_BC.csv")
-filter_bc <- read_csv(here::here("Data", filter_bc_file_name)) %>% 
-  select(filter_id, campaign, is_blank, blank_mean_bc = blank_mean, 
-         blank_cv_bc = blank_cv,
-         bc_mass_ug, bc_mass_ug_corrected, bc_ug_m3_uncorrected:negative_bc_mass)
+#' Calibrated BC data
+filter_bc_file_name <- paste0("Filter_BC_Calibrated.csv")
+filter_bc <- read_csv(here::here("Data", filter_bc_file_name)) %>%
+  select(filter_id, campaign, bc_ug_m3_raw, bc_ug_m3_lm, bc_ug_m3_dem)
 sum(duplicated(filter_bc$filter_id))
-table(filter_bc[which(duplicated(filter_bc$filter_id) ==T), "is_blank"])
-# View(filter(filter_bc, duplicated(filter_bc$filter_id)))
-
-filter_bc <- select(filter_bc, -is_blank)
-
-#' Add the calibrated BC data
-filter_bc_file_name2 <- paste0("Filter_BC_Calibrated.csv")
-filter_bc2 <- read_csv(here::here("Data", filter_bc_file_name2)) %>% 
-  select(filter_id, campaign, bc_ug_m3_adjlm, bc_ug_m3_lm, bc_ug_m3_dem)
-sum(duplicated(filter_bc2$filter_id))
-
-filter_bc <- left_join(filter_bc, filter_bc2, by =c("campaign", "filter_id"))
 
 #' Metals (currently uncalibrated)
 filter_met_file_name <- paste0("Filter_Metals.csv")
 filter_met <- read_csv(here::here("Data", filter_met_file_name))
 sum(duplicated(filter_met$filter_id))
-# View(filter(filter_met, duplicated(filter_met$filter_id)))
+#View(filter(filter_met, duplicated(filter_met$filter_id)))
 
 #' Combined
-filter_data <- full_join(filter_pm, filter_bc, by = c("filter_id", "campaign")) %>% 
+filter_data <- full_join(filter_pm, filter_bc, by = c("filter_id", "campaign")) %>%
   full_join(filter_met, by = c("filter_id", "campaign"))
 sum(duplicated(filter_data$filter_id))
 table(filter_data[which(duplicated(filter_data$filter_id) ==T), "is_blank"])
@@ -89,39 +73,40 @@ table(filter_data[which(duplicated(filter_data$filter_id) ==T), "is_blank"])
 sp_covariates_file_name <- "Spatial_Covariates_Filters_AEA.csv"
 sp_covariates <- read_csv(here::here("Data", sp_covariates_file_name)) %>% 
   select(-WKT)
-sp_covariates[which(sp_covariates$filter_id == "080310027"), "campaign"] <- "CampaignX"
+# sp_covariates[which(sp_covariates$filter_id == "080310027"), "campaign"] <- "CampaignX"
 
 #' Spatiotemporal covariates
-st_covariates_file_name <- "ST_Covariates_Filters_AEA.csv"
+st_covariates_file_name <- "ST_Covariates_Sites_AEA.csv"
 st_covariates <- read_csv(here::here("Data", st_covariates_file_name)) %>% 
-  mutate(filter_id = as.character(filter_id))
+  rename(st_week = week)
 
 #' Put it all together
-all_data <- full_join(filter_data, sp_covariates, by = c("filter_id", "campaign")) %>% 
-  full_join(st_covariates, by = c("filter_id", "campaign"))
+all_data <- full_join(filter_data, sp_covariates, by = c("filter_id", "campaign", "site_id")) %>% 
+  mutate(sample_week = as.Date(cut(as.Date(StartDateTimeLocal), "week"))) %>%
+  full_join(st_covariates, by = c("site_id")) %>%
+  select(-c(nn3_bc:idw_bc))
+test <- filter(all_data, filter_id == "080310027")
 class(all_data)
 names(all_data)
 
-site_match <- filter(all_data, filter_id == "200202")
-
-#' Set central monitor bc_ug_m3_dem == nn_bc
+#' Set central monitor bc_ug_m3 to nn_bc
 #' Set indoor == 0
 #' set lon/lat
 all_data <- all_data %>% 
-  mutate(bc_ug_m3_dem = ifelse(filter_id == "080310027", nn_bc, bc_ug_m3_dem),
-         indoor = ifelse(filter_id == "080310027", 0, indoor),
-         lon = ifelse(filter_id == "080310027", site_match$lon, lon),
-         lat = ifelse(filter_id == "080310027", site_match$lat, lat))
-  
-#' Duplicated IDs should all be blanks or the monitor ID
-sum(duplicated(all_data$filter_id))
-table(all_data[which(duplicated(all_data$filter_id) ==T), "is_blank"])
+  mutate(bc_ug_m3_raw = ifelse(filter_id == "080310027", nn_bc, bc_ug_m3_raw),
+         bc_ug_m3_dem = ifelse(filter_id == "080310027", nn_bc, bc_ug_m3_dem),
+         bc_ug_m3_lm = ifelse(filter_id == "080310027", nn_bc, bc_ug_m3_lm),
+         #sample_week = ifelse(filter_id == "080310027", as.Date(st_week, "%Y-%m-%d"), sample_week))
+         sample_week = ifelse(filter_id == "080310027", st_week, sample_week)) %>%
+  mutate(sample_week = as.Date(sample_week, origin = "1970-01-01"))
+test2 <- filter(all_data, filter_id == "080310027")
+tail(test2[,c("bc_ug_m3_dem", "nn_bc", "sample_week", "st_week")])
 
-# View(filter(all_data, duplicated(all_data$filter_id)))
+test3 <- select(all_data, sample_week, st_week, StartDateTimeLocal)
+View(test3)
 
-#' Fix paired IDs if needed
-table(all_data$paired_id)
-table(all_data$paired_id, all_data$campaign)
+test4 <- filter(filter(all_data, !is.na(bc_ug_m3_dem)), st_week == sample_week)
+View(test4)
 
 #' Write out data
 #' Two .csv files: with and without date  

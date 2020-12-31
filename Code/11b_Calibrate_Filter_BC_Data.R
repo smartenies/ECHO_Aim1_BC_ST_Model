@@ -90,7 +90,7 @@ summary(filter_data$bc_ug_m3_sampled_vol)
 hist(filter_data$logged_rt_volume_L)
 hist(filter_data$SampledVolume)
 
-filter_data <- rename(filter_data, bc_ug_m3 = bc_ug_m3_logged_vol)
+filter_data <- mutate(filter_data, bc_ug_m3 = bc_ug_m3_logged_vol)
 
 #' Comparison of all BC concentrations
 summary(filter_data$bc_ug_m3)
@@ -235,7 +235,7 @@ ggplot(cal_data, aes(x = monitor_mean, y = bc_ug_m3)) +
   ylab("UPAS BC (\u03bcg/m\u00b3)") + 
   xlab("Monitor BC (\u03bcg/m\u00b3)") +
   simple_theme
-ggsave(filename = here::here("Figs/Calibration", "UPAS_vs_Mon_All_Camps.jpeg"),
+ggsave(filename = here::here("Figs/Calibration", "BC_UPAS_vs_Mon_All_Camps.jpeg"),
        height = 5, width = 7, dpi = 500, units = "in", device = "jpeg")
 
 #' Plot BC monitor vs UPAS by campaign
@@ -263,7 +263,7 @@ ggplot() +
   scale_color_viridis(discrete = T, name = NULL) +
   ylab("UPAS BC (\u03bcg/m\u00b3)") + xlab("Monitor BC (\u03bcg/m\u00b3)") +
   simple_theme
-ggsave(filename = here::here("Figs/Calibration", "BC_vs_Mon_by_Campaign.jpeg"),
+ggsave(filename = here::here("Figs/Calibration", "BC_UPAS_vs_Mon_by_Campaign.jpeg"),
        height = 5, width = 7, dpi = 500, units = "in", device = "jpeg")
 
 #' -----------------------------------------------------------------------------
@@ -613,7 +613,7 @@ ggplot(filter_data_c5) +
 
 filter_data3 <- bind_rows(filter_data_c2, filter_data_c3,
                           filter_data_c4, filter_data_c5)
-
+unique(filter_data3$campaign)
 names(filter_data3)
 
 filter_data_comp <- filter_data3 %>% 
@@ -864,6 +864,6 @@ ba_plots <- annotate_figure(
 ba_plots
 
 ggsave(ba_plots,
-       filename = here::here("Figs/Calibration", "BA_Plots_Combined.jpeg"),
+       filename = here::here("Figs/Calibration", "BA_Plots_Combined_BC.jpeg"),
        height = 9, width = 7, dpi = 500, units = "in", device = "jpeg")
 

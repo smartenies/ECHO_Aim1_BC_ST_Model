@@ -26,6 +26,7 @@ for (met in 1:length(met_vars)) {
   print(paste(met, "of", length(met_vars), "variables"))
   
   file_list <- list.files(aqs_path, pattern = met_vars[met])
+  file_list <- file_list[which(!(str_detect(file_list, "Monitor")))]
   
   met_data <- data.frame()
   

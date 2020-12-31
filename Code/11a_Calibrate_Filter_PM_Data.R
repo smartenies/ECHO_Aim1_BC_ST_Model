@@ -24,6 +24,7 @@ library(tidyverse)
 library(lubridate)
 library(readxl)
 library(scales)
+library(deming)
 
 #' For ggplots
 simple_theme <- theme(
@@ -64,13 +65,29 @@ mae <- function(error)
 #' Read in list of collocated monitors
 #' -----------------------------------------------------------------------------
 
-filter_data <- read_csv(here::here("Data", "Filter_PM.csv")) %>% 
-  filter(!is.na(EndDateLocal)) %>% 
-  arrange(EndDateLocal) 
 monitor_data <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv"))
 
-hist(filter_data$pm_ug_m3)
+filter_data <- read_csv(here::here("Data", "Filter_PM.csv")) %>% 
+  filter(!is.na(EndDateLocal)) %>% 
+  filter(indoor == 0) %>%
+  #' QA filters
+  filter(is.na(pm_below_lod) | pm_below_lod == 0) %>% 
+  filter(is.na(is_blank) | is_blank == 0) %>% 
+  filter(potential_contamination == 0) %>%
+  arrange(EndDateLocal)  
+
+#' Choose which calculated concentration to use
+#' Going with the logged volume one
+hist(filter_data$pm_ug_m3_logged_vol)
+hist(filter_data$pm_ug_m3_sampled_vol)
+
+summary(filter_data$pm_ug_m3_logged_vol)
+summary(filter_data$pm_ug_m3_sampled_vol)
+
+hist(filter_data$logged_rt_volume_L)
 hist(filter_data$SampledVolume)
+
+filter_data <- mutate(filter_data, pm_ug_m3 = pm_ug_m3_logged_vol)
 
 #' Collocated monitors:
 #' National Jewish (080310013) 1400 Jackson St, Denver, CO 80206: PM2.5
@@ -89,11 +106,10 @@ cal_data <- filter(filter_data, filter_id %in% collocated_ids$filter_id) %>%
   dplyr::select(filter_id, StartDateTimeLocal, EndDateTimeLocal, is_blank, 
          indoor, pm_ug_m3, campaign, pm_below_lod, low_volume_flag, 
          ultralow_volume_flag, flow_rate_flag,
-         SampledVolume, LoggedRuntime) %>%
+         SampledVolume, logged_rt_volume_L,  LoggedRuntime) %>%
   left_join(collocated_ids, by = c("filter_id", "campaign")) %>%
   left_join(mon_ids, by = "Location") %>% 
-  filter(is_blank == 0) %>% 
-  filter(!is.na(pm_ug_m3))
+  filter(is_blank == 0)
 
 #'How do the collocated filters compare to all filters
 summary(filter_data$pm_ug_m3)
@@ -109,22 +125,22 @@ hist(cal_data$pm_ug_m3)
 
 #' Next, let's check out sampled volumes
 hist(cal_data$pm_ug_m3)
-hist(cal_data$SampledVolume)
+hist(cal_data$logged_rt_volume_L)
 
 table(cal_data$low_volume_flag, cal_data$campaign)
 table(cal_data$ultralow_volume_flag, cal_data$campaign)
 
 #' Is there a relationships between sampled volume and raw pm concentration?
-plot(cal_data$SampledVolume, cal_data$pm_ug_m3)
-abline(lm(pm_ug_m3 ~ SampledVolume, data = cal_data))
-summary(lm(pm_ug_m3 ~ SampledVolume, data = cal_data))
+plot(cal_data$logged_rt_volume_L, cal_data$pm_ug_m3)
+abline(lm(pm_ug_m3 ~ logged_rt_volume_L, data = cal_data))
+summary(lm(pm_ug_m3 ~ logged_rt_volume_L, data = cal_data))
 
-#' Is there a relationship if we exclude "low volume" (< 3000 L) filters?
+#' Is there a relationship if we exclude "low volume" (< 4000 L) filters?
 #' Answer appears to be no
 no_lows <- filter(cal_data, low_volume_flag == 0)
-plot(no_lows$SampledVolume, no_lows$pm_ug_m3)
-abline(lm(pm_ug_m3 ~ SampledVolume, data = no_lows))
-summary(lm(pm_ug_m3 ~ SampledVolume, data = no_lows))
+plot(no_lows$logged_rt_volume_L, no_lows$pm_ug_m3)
+abline(lm(pm_ug_m3 ~ logged_rt_volume_L, data = no_lows))
+summary(lm(pm_ug_m3 ~ logged_rt_volume_L, data = no_lows))
 
 #' What about just the low volume filters?
 #' Answer appears to be yes
@@ -213,166 +229,69 @@ ggplot(cal_data, aes(x = monitor_mean, y = pm_ug_m3)) +
   ylab("UPAS PM\u2082.\u2085 (\u03bcg/m\u00b3)") + 
   xlab("Monitor PM\u2082.\u2085 (\u03bcg/m\u00b3)") +
   simple_theme
-ggsave(filename = here::here("Figs/Calibration", "PM_Cal_Curves.jpeg"),
-       height = 5, width = 5, dpi = 500, units = "in", device = "jpeg")
+ggsave(filename = here::here("Figs/Calibration", "PM_UPAS_vs_Mon_All_Camps.jpeg"),
+       height = 5, width = 7, dpi = 500, units = "in", device = "jpeg")
 
-#' Linear regression model for all of the data at once
-par(mfrow=c(1,1))
-plot(cal_data$monitor_mean, cal_data$pm_ug_m3)
-abline(reg = lm(pm_ug_m3 ~ monitor_mean,  data = cal_data))
-cal_lm <- lm(pm_ug_m3 ~ monitor_mean,  data = cal_data)
-summary(cal_lm)
-par(mfrow=c(2,2))
-plot(cal_lm)
-par(mfrow=c(1,1))
+#' Plot BC monitor vs UPAS by campaign
+ggplot() +
+  geom_smooth(data = filter(cal_data, campaign == "Campaign2" & monitor_id == "080310027"),
+              aes(x = monitor_mean, y = pm_ug_m3, color = campaign),
+              method = "lm", show.legend = F, se = T) +
+  geom_point(data = filter(cal_data, campaign == "Campaign2" & monitor_id == "080310027"),
+             aes(x = monitor_mean, y = pm_ug_m3, color = campaign)) +
+  geom_smooth(data = filter(cal_data, campaign == "Campaign3" & monitor_id == "080310027"),
+              aes(x = monitor_mean, y = pm_ug_m3, color = campaign),
+              method = "lm", show.legend = F, se = T) +
+  geom_point(data = filter(cal_data, campaign == "Campaign3" & monitor_id == "080310027"),
+             aes(x = monitor_mean, y = pm_ug_m3, color = campaign)) +
+  geom_smooth(data = filter(cal_data, campaign == "Campaign4" & monitor_id == "080310027"),
+              aes(x = monitor_mean, y = pm_ug_m3, color = campaign),
+              method = "lm", show.legend = F, se = T) +
+  geom_point(data = filter(cal_data, campaign == "Campaign4" & monitor_id == "080310027"),
+             aes(x = monitor_mean, y = pm_ug_m3, color = campaign)) +
+  geom_smooth(data = filter(cal_data, campaign == "Campaign5" & monitor_id == "080310027"),
+              aes(x = monitor_mean, y = pm_ug_m3, color = campaign),
+              method = "lm", show.legend = F, se = T) +
+  geom_point(data = filter(cal_data, campaign == "Campaign5" & monitor_id == "080310027"),
+             aes(x = monitor_mean, y = pm_ug_m3, color = campaign)) +
+  scale_color_viridis(discrete = T, name = NULL) +
+  ylab("UPAS PM\u2082.\u2085 (\u03pmg/m\u00b3)") + xlab("Monitor UPAS PM\u2082.\u2085 (\u03pmg/m\u00b3)") +
+  simple_theme
+ggsave(filename = here::here("Figs/Calibration", "PM_UPAS_vs_Mon_by_Campaign_I25.jpeg"),
+       height = 5, width = 7, dpi = 500, units = "in", device = "jpeg")
 
-#' Linear regression models stratified by location
-#' Which one has best preliminary fit?
-#' NATIONAL JEWISH: 
-njh_data <- filter(cal_data, monitor_id == "080310013")
-par(mfrow=c(1,1))
-plot(njh_data$monitor_mean, njh_data$pm_ug_m3)
-abline(reg = lm(pm_ug_m3 ~ monitor_mean,  data = njh_data))
-njh_lm <- lm(pm_ug_m3 ~ monitor_mean,  data = njh_data)
-summary(njh_lm)
-par(mfrow=c(2,2))
-plot(njh_lm)
-par(mfrow=c(1,1))
+#' -----------------------------------------------------------------------------
+#' Linear regression model for all campaigns combined
+#' Deming regression model for all campaigns combined
+#' Note: using data from the I-25 monitor to match the BC measurements
+#' -----------------------------------------------------------------------------
 
-#' I25-Denver: 
-i25_data <- filter(cal_data, monitor_id == "080310027")
-par(mfrow=c(1,1))
-plot(i25_data$monitor_mean, i25_data$pm_ug_m3)
-abline(reg = lm(pm_ug_m3 ~ monitor_mean,  data = i25_data))
-i25_lm <- lm(pm_ug_m3 ~ monitor_mean,  data = i25_data)
+cal_data2 <- filter(cal_data, monitor_id == "080310027")
+
+cor(cal_data2$monitor_mean, cal_data2$pm_ug_m3)
+plot(cal_data2$monitor_mean, cal_data2$pm_ug_m3)
+abline(lm(pm_ug_m3 ~ monitor_mean, data = cal_data2))
+
+#' Linear Model: R2 = 0.10
+i25_lm <- lm(pm_ug_m3 ~ monitor_mean, data = cal_data2)
 summary(i25_lm)
 par(mfrow=c(2,2))
 plot(i25_lm)
 par(mfrow=c(1,1))
 
-#' GLOBEVILLE: 
-globe_data <- filter(cal_data, monitor_id == "080310028")
-par(mfrow=c(1,1))
-plot(globe_data$monitor_mean, globe_data$pm_ug_m3)
-abline(reg = lm(pm_ug_m3 ~ monitor_mean,  data = globe_data))
-globe_lm <- lm(pm_ug_m3 ~ monitor_mean,  data = globe_data)
-summary(globe_lm)
-par(mfrow=c(2,2))
-plot(globe_lm)
-par(mfrow=c(1,1))
+lm_int <- unname(i25_lm$coefficients[1])
+lm_slope <- unname(i25_lm$coefficients[2])
 
-#' Navajo St: 
-navajo_data <- filter(cal_data, monitor_id == "080310026")
-par(mfrow=c(1,1))
-plot(navajo_data$monitor_mean, navajo_data$pm_ug_m3)
-abline(reg = lm(pm_ug_m3 ~ monitor_mean,  data = navajo_data))
-navajo_lm <- lm(pm_ug_m3 ~ monitor_mean,  data = navajo_data)
-summary(navajo_lm)
-par(mfrow=c(2,2))
-plot(navajo_lm)
-par(mfrow=c(1,1))
-
-#' -----------------------------------------------------------------------------
-#' Campaign effects?
-#' Try using I-25 data since we have the most obs for that monitor
-#' Also using Deming regression here
-#' -----------------------------------------------------------------------------
-
-library(deming)
-
-#' Campaign 2
-i25_c2_data <- filter(cal_data, monitor_id == "080310027" & campaign == "Campaign2")
-par(mfrow=c(1,1))
-plot(i25_c2_data$monitor_mean, i25_c2_data$pm_ug_m3)
-abline(reg = lm(pm_ug_m3 ~ monitor_mean,  data = i25_c2_data))
-i25_c2_lm <- lm(pm_ug_m3 ~ monitor_mean,  data = i25_c2_data)
-summary(i25_c2_lm)
-par(mfrow=c(2,2))
-plot(i25_c2_lm)
-par(mfrow=c(1,1))
-
-i25_c2_dem <- deming(pm_ug_m3 ~ monitor_mean,  data = i25_c2_data)
-print(i25_c2_dem)
-
-#' Campaign 3
-i25_c3_data <- filter(cal_data, monitor_id == "080310027" & campaign == "Campaign3")
-par(mfrow=c(1,1))
-plot(i25_c3_data$monitor_mean, i25_c3_data$pm_ug_m3)
-abline(reg = lm(pm_ug_m3 ~ monitor_mean,  data = i25_c3_data))
-i25_c3_lm <- lm(pm_ug_m3 ~ monitor_mean,  data = i25_c3_data)
-summary(i25_c3_lm)
-par(mfrow=c(2,2))
-plot(i25_c3_lm)
-par(mfrow=c(1,1))
-
-i25_c3_dem <- deming(pm_ug_m3 ~ monitor_mean,  data = i25_c3_data)
-print(i25_c3_dem)
-
-#' Campaign 4
-i25_c4_data <- filter(cal_data, monitor_id == "080310027" & campaign == "Campaign4")
-par(mfrow=c(1,1))
-plot(i25_c4_data$monitor_mean, i25_c4_data$pm_ug_m3)
-abline(reg = lm(pm_ug_m3 ~ monitor_mean,  data = i25_c4_data))
-i25_c4_lm <- lm(pm_ug_m3 ~ monitor_mean,  data = i25_c4_data)
-summary(i25_c4_lm)
-par(mfrow=c(2,2))
-plot(i25_c4_lm)
-par(mfrow=c(1,1))
-
-i25_c4_dem <- deming(pm_ug_m3 ~ monitor_mean,  data = i25_c4_data)
-print(i25_c4_dem)
-
-#' Campaign 5
-i25_c5_data <- filter(cal_data, monitor_id == "080310027" & campaign == "Campaign5")
-par(mfrow=c(1,1))
-plot(i25_c5_data$monitor_mean, i25_c5_data$pm_ug_m3)
-abline(reg = lm(pm_ug_m3 ~ monitor_mean,  data = i25_c5_data))
-i25_c5_lm <- lm(pm_ug_m3 ~ monitor_mean,  data = i25_c5_data)
-summary(i25_c5_lm)
-par(mfrow=c(2,2))
-plot(i25_c5_lm)
-par(mfrow=c(1,1))
-
-i25_c5_dem <- deming(pm_ug_m3 ~ monitor_mean,  data = i25_c5_data)
-print(i25_c5_dem)
-
-#' -----------------------------------------------------------------------------
-#' Give Deming regression a try- accounts for errors in "outcome"
-#' Based on the plots above-- trying the globeville data set
-#' -----------------------------------------------------------------------------
-
-library(deming)
-
-i25_dem <- deming(pm_ug_m3 ~ monitor_mean,  
-                  data = filter(cal_data, monitor_id == "080310027"))
+#' Deming Model
+i25_dem <- deming(pm_ug_m3 ~ monitor_mean, data = cal_data2)
 print(i25_dem)
+
+dem_int <- unname(i25_dem$coefficients[1])
+dem_slope <- unname(i25_dem$coefficients[2])
 
 #' -----------------------------------------------------------------------------
 #' Compare linear regression and deming regression using mean bias and RMSE
 #' -----------------------------------------------------------------------------
-
-#' Linear regression model
-fit_lm <- i25_lm
-summary(fit_lm)
-
-#' Linear coefficients
-int_lm <- unname(fit_lm$coefficients[1])
-beta_pm_lm <- unname(fit_lm$coefficients[2])
-
-#' Deming  regression model
-fit_dem <- i25_dem
-print(fit_dem)
-
-#' Deming coefficients
-int_dem <- unname(fit_dem$coefficients[1])
-beta_pm_dem <- unname(fit_dem$coefficients[2])
-
-fit_monitor <- "080310027"
-
-#' Calibrating using equations
-fit_data <- filter(cal_data, monitor_id == "080310027") %>% 
-  mutate(pm_ug_m3_lmcal = (pm_ug_m3 - int_lm) / beta_pm_lm,
-         pm_ug_m3_demcal = (pm_ug_m3 - int_dem) / beta_pm_dem)
 
 #' MAE and RMSE- Linear model
 mae(i25_lm$residuals)
@@ -382,85 +301,542 @@ rmse(i25_lm$residuals)
 mae(i25_dem$residuals)
 rmse(i25_dem$residuals)
 
-i25_cal_data <- filter(cal_data, monitor_id == "080310027")
-
-plot(i25_cal_data$monitor_mean, i25_cal_data$pm_ug_m3, 
+plot(cal_data$monitor_mean, cal_data$bc_ug_m3, 
      main = "Regression Comparison", 
      xlab = "EPA Monitor", ylab = "UPAS Filter")
 abline(i25_lm, col="red")
 abline(i25_dem, col = "blue")
-abline(0, 1, col = "black", lty = 2)
-
-
-
-#' Calibrating using equation
-filter_data2 <- filter_data2 %>% 
-  #' Calibrated PM (adjusted linear model)
-  mutate(pm_ug_m3_adjlm = (pm_ug_m3 - int_adjlm - (beta_camp3_adjlm * camp3) - 
-                             (beta_camp4_adjlm * camp4)) / beta_pm_adjlm) %>% 
-  #' Calibrate using crude linear model and deming model
-  mutate(pm_ug_m3_lm = (pm_ug_m3 - int_lm) / beta_pm_lm,
-         pm_ug_m3_dem = (pm_ug_m3 - int_dem) / beta_pm_dem)
-
-summary(filter_data2$pm_ug_m3)
-summary(filter_data2$pm_ug_m3_adjlm)
-summary(filter_data2$pm_ug_m3_lm)
-summary(filter_data2$pm_ug_m3_dem)
-summary(filter_data2$monitor_mean)
+legend(x = "topright", col = c("red", "blue"), lty = c(1, 1), 
+       legend = c("Linear", "Deming"))
 
 #' -----------------------------------------------------------------------------
-#' Diagnostic Plots!
+#' The scatter plots of EPA vs UPAS suggest some serious differences by season!
+#' Explore linear regression and Deming regression for each campaign separately
 #' -----------------------------------------------------------------------------
 
-filter_data_comp <- filter_data2 %>% 
-  dplyr::select(filter_id, month, season, pm_ug_m3, pm_ug_m3_lm, 
-         pm_ug_m3_dem, monitor_mean) %>% 
-  gather(key = type, value = pm, -filter_id, -month, -season)
+#' -------------------------------------
+#' Campaign 2
+#' Linear and Deming regression
+#' -------------------------------------
 
-ggplot(filter_data_comp, aes(x = as.factor(month), y = pm, fill = as.factor(type))) +
-  ggtitle("Monthly distribution of measured and calibrated PM2.5") +
+cal_data_c2 <- filter(cal_data2, campaign == "Campaign2")
+cor(cal_data_c2$monitor_mean, cal_data_c2$pm_ug_m3)
+plot(cal_data_c2$monitor_mean, cal_data_c2$pm_ug_m3)
+abline(lm(pm_ug_m3 ~ monitor_mean, data = cal_data_c2))
+
+i25_lm_c2 <- lm(pm_ug_m3 ~ monitor_mean, data = cal_data_c2)
+summary(i25_lm_c2)
+par(mfrow=c(2,2))
+plot(i25_lm_c2)
+par(mfrow=c(1,1))
+
+lm_int_c2 <- unname(i25_lm_c2$coefficients[1])
+lm_slope_c2 <- unname(i25_lm_c2$coefficients[2])
+
+i25_dem_c2 <- deming(pm_ug_m3 ~ monitor_mean, data = cal_data_c2)
+print(i25_dem_c2)
+
+dem_int_c2 <- unname(i25_dem_c2$coefficients[1])
+dem_slope_c2 <- unname(i25_dem_c2$coefficients[2])
+
+plot(cal_data_c2$monitor_mean, cal_data_c2$pm_ug_m3, 
+     main = "Regression Comparison", 
+     xlab = "EPA Monitor", ylab = "UPAS Filter")
+abline(i25_lm_c2, col="red")
+abline(i25_dem_c2, col = "blue")
+legend(x = "topright", col = c("red", "blue"), lty = c(1, 1), legend = c("Linear", "Deming"))
+
+#' MAE and RMSE- Linear model
+mae(i25_lm_c2$residuals)
+rmse(i25_lm_c2$residuals)
+
+#' MAE and RMSE- Deming model
+mae(i25_dem_c2$residuals)
+rmse(i25_dem_c2$residuals)
+
+#' -------------------------------------
+#' Campaign 3
+#' Linear and Deming regression
+#' -------------------------------------
+
+cal_data_c3 <- filter(cal_data2, campaign == "Campaign3")
+cor(cal_data_c3$monitor_mean, cal_data_c3$pm_ug_m3)
+plot(cal_data_c3$monitor_mean, cal_data_c3$pm_ug_m3)
+abline(lm(pm_ug_m3 ~ monitor_mean, data = cal_data_c3))
+
+i25_lm_c3 <- lm(pm_ug_m3 ~ monitor_mean, data = cal_data_c3)
+summary(i25_lm_c3)
+par(mfrow=c(2,2))
+plot(i25_lm_c3)
+par(mfrow=c(1,1))
+
+lm_int_c3 <- unname(i25_lm_c3$coefficients[1])
+lm_slope_c3 <- unname(i25_lm_c3$coefficients[2])
+
+i25_dem_c3 <- deming(pm_ug_m3 ~ monitor_mean, data = cal_data_c3)
+print(i25_dem_c3)
+
+dem_int_c3 <- unname(i25_dem_c3$coefficients[1])
+dem_slope_c3 <- unname(i25_dem_c3$coefficients[2])
+
+plot(cal_data_c3$monitor_mean, cal_data_c3$pm_ug_m3, 
+     main = "Regression Comparison", 
+     xlab = "EPA Monitor", ylab = "UPAS Filter")
+abline(i25_lm_c3, col="red")
+abline(i25_dem_c3, col = "blue")
+legend(x = "topright", col = c("red", "blue"), lty = c(1, 1), legend = c("Linear", "Deming"))
+
+#' MAE and RMSE- Linear model
+mae(i25_lm_c3$residuals)
+rmse(i25_lm_c3$residuals)
+
+#' MAE and RMSE- Deming model
+mae(i25_dem_c3$residuals)
+rmse(i25_dem_c3$residuals)
+
+#' -------------------------------------
+#' Campaign 4
+#' Linear and Deming regression
+#' -------------------------------------
+
+cal_data_c4 <- filter(cal_data2, campaign == "Campaign4")
+cor(cal_data_c4$monitor_mean, cal_data_c4$pm_ug_m3)
+plot(cal_data_c4$monitor_mean, cal_data_c4$pm_ug_m3)
+abline(lm(pm_ug_m3 ~ monitor_mean, data = cal_data_c4))
+
+i25_lm_c4 <- lm(pm_ug_m3 ~ monitor_mean, data = cal_data_c4)
+summary(i25_lm_c4)
+par(mfrow=c(2,2))
+plot(i25_lm_c4)
+par(mfrow=c(1,1))
+
+lm_int_c4 <- unname(i25_lm_c4$coefficients[1])
+lm_slope_c4 <- unname(i25_lm_c4$coefficients[2])
+
+i25_dem_c4 <- deming(pm_ug_m3 ~ monitor_mean, data = cal_data_c4)
+print(i25_dem_c4)
+
+dem_int_c4 <- unname(i25_dem_c4$coefficients[1])
+dem_slope_c4 <- unname(i25_dem_c4$coefficients[2])
+
+plot(cal_data_c4$monitor_mean, cal_data_c4$pm_ug_m3, 
+     main = "Regression Comparison", 
+     xlab = "EPA Monitor", ylab = "UPAS Filter")
+abline(i25_lm_c4, col="red")
+abline(i25_dem_c4, col = "blue")
+legend(x = "topright", col = c("red", "blue"), lty = c(1, 1), legend = c("Linear", "Deming"))
+
+#' MAE and RMSE- Linear model
+mae(i25_lm_c4$residuals)
+rmse(i25_lm_c4$residuals)
+
+#' MAE and RMSE- Deming model
+mae(i25_dem_c4$residuals)
+rmse(i25_dem_c4$residuals)
+
+#' -------------------------------------
+#' Campaign 5
+#' Linear and Deming regression
+#' -------------------------------------
+
+cal_data_c5 <- filter(cal_data2, campaign == "Campaign5")
+cor(cal_data_c5$monitor_mean, cal_data_c5$pm_ug_m3)
+plot(cal_data_c5$monitor_mean, cal_data_c5$pm_ug_m3)
+abline(lm(pm_ug_m3 ~ monitor_mean, data = cal_data_c5))
+
+i25_lm_c5 <- lm(pm_ug_m3 ~ monitor_mean, data = cal_data_c5)
+summary(i25_lm_c5)
+par(mfrow=c(2,2))
+plot(i25_lm_c5)
+par(mfrow=c(1,1))
+
+lm_int_c5 <- unname(i25_lm_c5$coefficients[1])
+lm_slope_c5 <- unname(i25_lm_c5$coefficients[2])
+
+i25_dem_c5 <- deming(pm_ug_m3 ~ monitor_mean, data = cal_data_c5)
+print(i25_dem_c5)
+
+dem_int_c5 <- unname(i25_dem_c5$coefficients[1])
+dem_slope_c5 <- unname(i25_dem_c5$coefficients[2])
+
+plot(cal_data_c5$monitor_mean, cal_data_c5$pm_ug_m3, 
+     main = "Regression Comparison", 
+     xlab = "EPA Monitor", ylab = "UPAS Filter")
+abline(i25_lm_c5, col="red")
+abline(i25_dem_c5, col = "blue")
+legend(x = "topright", col = c("red", "blue"), lty = c(1, 1), legend = c("Linear", "Deming"))
+
+#' MAE and RMSE- Linear model
+mae(i25_lm_c5$residuals)
+rmse(i25_lm_c5$residuals)
+
+#' MAE and RMSE- Deming model
+mae(i25_dem_c5$residuals)
+rmse(i25_dem_c5$residuals)
+
+#' -----------------------------------------------------------------------------
+#' Going to calibrate each campaign separately, with Campaigns 1 & 2 together
+#' Also going to have a variable where we calibrate based on the "overall" curve
+#' Going to have a calibrated value using Deming regression and linear regression
+#' -----------------------------------------------------------------------------
+
+#' -------------------------------------
+#' Campaigns 1 & 2
+#' -------------------------------------
+
+filter_data_c2 <- filter(filter_data, campaign %in% c("Campaign1", "Campaign2"))
+
+summary(cal_data_c2$pm_ug_m3)
+summary(filter_data_c2$pm_ug_m3)
+hist(filter_data_c2$pm_ug_m3)
+
+#' Calibrating the filter data
+filter_data_c2 <- filter_data_c2 %>%
+  #' rename the concentration to specify that it's raw
+  rename(pm_ug_m3_raw = pm_ug_m3) %>%
+  #' Calibrated PM (using the "all campaigns" models)
+  mutate(pm_ug_m3_lm_all = (pm_ug_m3_raw - lm_int) / lm_slope) %>%
+  mutate(pm_ug_m3_dem_all = (pm_ug_m3_raw - dem_int) / dem_slope) %>%
+  #' Calibrated PM (Linear model)
+  mutate(pm_ug_m3_lm = (pm_ug_m3_raw - lm_int_c2) / lm_slope_c2) %>% 
+  #' Calibrated PM (Deming model) 
+  mutate(pm_ug_m3_dem = (pm_ug_m3_raw - dem_int_c2) / dem_slope_c2) 
+
+summary(filter_data_c2$pm_ug_m3_raw)
+summary(filter_data_c2$pm_ug_m3_lm)
+summary(filter_data_c2$pm_ug_m3_lm_all)
+summary(filter_data_c2$pm_ug_m3_dem)
+summary(filter_data_c2$pm_ug_m3_dem_all)
+
+ggplot(filter_data_c2) +
+  geom_density(aes(x = pm_ug_m3_raw, color = "Raw")) +
+  geom_density(aes(x = pm_ug_m3_lm, color = "Linear model")) +
+  geom_density(aes(x = pm_ug_m3_lm_all, color = "Linear model (all campaigns)")) +
+  geom_density(aes(x = pm_ug_m3_dem, color = "Deming model")) +
+  geom_density(aes(x = pm_ug_m3_dem_all, color = "Deming model (all campaigns")) +
+  xlab("Time-weighted average UPAS BC (\u03bcg/m\u00b3)") +
+  scale_color_viridis(name = "Data type", discrete = T) +
+  simple_theme
+
+#' -------------------------------------
+#' Campaign 3
+#' -------------------------------------
+
+filter_data_c3 <- filter(filter_data, campaign == "Campaign3")
+
+summary(cal_data_c3$pm_ug_m3)
+summary(filter_data_c3$pm_ug_m3)
+hist(filter_data_c3$pm_ug_m3)
+
+#' Calibrating the filter data
+filter_data_c3 <- filter_data_c3 %>%
+  #' rename the concentration to specify that it's raw
+  rename(pm_ug_m3_raw = pm_ug_m3) %>%
+  #' Calibrated PM (using the "all campaigns" model)
+  mutate(pm_ug_m3_lm_all = (pm_ug_m3_raw - lm_int) / lm_slope) %>%
+  mutate(pm_ug_m3_dem_all = (pm_ug_m3_raw - dem_int) / dem_slope) %>%
+  #' Calibrated PM (Linear model)
+  mutate(pm_ug_m3_lm = (pm_ug_m3_raw - lm_int_c3) / lm_slope_c3) %>% 
+  #' Calibrated PM (Deming model) 
+  mutate(pm_ug_m3_dem = (pm_ug_m3_raw - dem_int_c3) / dem_slope_c3) 
+
+summary(filter_data_c3$pm_ug_m3_raw)
+summary(filter_data_c3$pm_ug_m3_lm)
+summary(filter_data_c3$pm_ug_m3_lm_all)
+summary(filter_data_c3$pm_ug_m3_dem)
+summary(filter_data_c3$pm_ug_m3_dem_all)
+
+ggplot(filter_data_c3) +
+  geom_density(aes(x = pm_ug_m3_raw, color = "Raw")) +
+  geom_density(aes(x = pm_ug_m3_lm, color = "Linear model")) +
+  geom_density(aes(x = pm_ug_m3_lm_all, color = "Linear model (all campaigns)")) +
+  geom_density(aes(x = pm_ug_m3_dem, color = "Deming model")) +
+  geom_density(aes(x = pm_ug_m3_dem_all, color = "Deming model (all campaigns")) +
+  xlab("Time-weighted average UPAS BC (\u03bcg/m\u00b3)") +
+  scale_color_viridis(name = "Data type", discrete = T) +
+  simple_theme
+
+#' -------------------------------------
+#' Campaign 4
+#' -------------------------------------
+
+filter_data_c4 <- filter(filter_data, campaign == "Campaign4")
+
+summary(cal_data_c4$pm_ug_m3)
+summary(filter_data_c4$pm_ug_m3)
+hist(filter_data_c4$pm_ug_m3)
+
+#' Calibrating the filter data
+filter_data_c4 <- filter_data_c4 %>%
+  #' rename the concentration to specify that it's raw
+  rename(pm_ug_m3_raw = pm_ug_m3) %>%
+  #' Calibrated PM (using the "all campaigns" model)
+  mutate(pm_ug_m3_lm_all = (pm_ug_m3_raw - lm_int) / lm_slope) %>%
+  mutate(pm_ug_m3_dem_all = (pm_ug_m3_raw - dem_int) / dem_slope) %>%
+  #' Calibrated PM (Linear model)
+  mutate(pm_ug_m3_lm = (pm_ug_m3_raw - lm_int_c4) / lm_slope_c4) %>% 
+  #' Calibrated PM (Deming model) 
+  mutate(pm_ug_m3_dem = (pm_ug_m3_raw - dem_int_c4) / dem_slope_c4) 
+
+summary(filter_data_c4$pm_ug_m3_raw)
+summary(filter_data_c4$pm_ug_m3_lm)
+summary(filter_data_c4$pm_ug_m3_lm_all)
+summary(filter_data_c4$pm_ug_m3_dem)
+summary(filter_data_c4$pm_ug_m3_dem_all)
+
+ggplot(filter_data_c4) +
+  geom_density(aes(x = pm_ug_m3_raw, color = "Raw")) +
+  geom_density(aes(x = pm_ug_m3_lm, color = "Linear model")) +
+  geom_density(aes(x = pm_ug_m3_lm_all, color = "Linear model (all campaigns)")) +
+  geom_density(aes(x = pm_ug_m3_dem, color = "Deming model")) +
+  geom_density(aes(x = pm_ug_m3_dem_all, color = "Deming model (all campaigns")) +
+  xlab("Time-weighted average UPAS BC (\u03bcg/m\u00b3)") +
+  scale_color_viridis(name = "Data type", discrete = T) +
+  simple_theme
+
+#' -------------------------------------
+#' Campaign 5
+#' -------------------------------------
+
+filter_data_c5 <- filter(filter_data, campaign == "Campaign5")
+
+summary(cal_data_c5$pm_ug_m3)
+summary(filter_data_c5$pm_ug_m3)
+hist(filter_data_c5$pm_ug_m3)
+
+#' Calibrating the filter data
+filter_data_c5 <- filter_data_c5 %>%
+  #' rename the concentration to specify that it's raw
+  rename(pm_ug_m3_raw = pm_ug_m3) %>%
+  #' Calibrated PM (using the "all campaigns" model)
+  mutate(pm_ug_m3_lm_all = (pm_ug_m3_raw - lm_int) / lm_slope) %>%
+  mutate(pm_ug_m3_dem_all = (pm_ug_m3_raw - dem_int) / dem_slope) %>%
+  #' Calibrated PM (Linear model)
+  mutate(pm_ug_m3_lm = (pm_ug_m3_raw - lm_int_c5) / lm_slope_c5) %>% 
+  #' Calibrated PM (Deming model) 
+  mutate(pm_ug_m3_dem = (pm_ug_m3_raw - dem_int_c5) / dem_slope_c5) 
+
+summary(filter_data_c5$pm_ug_m3_raw)
+summary(filter_data_c5$pm_ug_m3_lm)
+summary(filter_data_c5$pm_ug_m3_lm_all)
+summary(filter_data_c5$pm_ug_m3_dem)
+summary(filter_data_c5$pm_ug_m3_dem_all)
+
+ggplot(filter_data_c5) +
+  geom_density(aes(x = pm_ug_m3_raw, color = "Raw")) +
+  geom_density(aes(x = pm_ug_m3_lm, color = "Linear model")) +
+  geom_density(aes(x = pm_ug_m3_lm_all, color = "Linear model (all campaigns)")) +
+  geom_density(aes(x = pm_ug_m3_dem, color = "Deming model")) +
+  geom_density(aes(x = pm_ug_m3_dem_all, color = "Deming model (all campaigns")) +
+  xlab("Time-weighted average UPAS BC (\u03bcg/m\u00b3)") +
+  scale_color_viridis(name = "Data type", discrete = T) +
+  simple_theme
+
+#' -----------------------------------------------------------------------------
+#' Combine the data sets
+#' -----------------------------------------------------------------------------
+
+filter_data3 <- bind_rows(filter_data_c2, filter_data_c3,
+                          filter_data_c4, filter_data_c5)
+unique(filter_data3$campaign)
+names(filter_data3)
+
+filter_data_comp <- filter_data3 %>% 
+  dplyr::select(filter_id, campaign, pm_ug_m3_raw, pm_ug_m3_lm, pm_ug_m3_lm_all, 
+                pm_ug_m3_dem) %>% 
+  pivot_longer(names_to = "type", values_to = "pm", -c(filter_id, campaign))
+
+ggplot(filter_data_comp, aes(x = as.factor(campaign), y = pm, fill = as.factor(type))) +
+  ggtitle("Distribution of measured and calibrated PM2.5 by campaign") +
   geom_boxplot(alpha = 0.75) +
+  geom_hline(aes(yintercept = 0), linetype = 2, color = "red") +
   scale_fill_viridis(name = "Data Type", discrete = T, 
                      labels = c("pm_ug_m3" = "Raw Data",
-                                "pm_ug_m3_lm" = "Crude linear model",
+                                "pm_ug_m3_lm" = "Linear model (by campaign)",
+                                "pm_ug_m3_lm_all" = "Linear model (all campaigns)",
                                 "pm_ug_m3_dem" = "Deming model",
-                                "monitor_mean" = "EPA Monitor")) +
-  xlab("Month") + ylab("PM\u2082.\u2085 (\u03bcg/m\u00b3)") +
-  scale_y_continuous(limits = c(-10, 50)) +
+                                "monitor_mean" = "EPA Monitors")) +
+  xlab("Campaign") + ylab("PM2.5 (\u03pmg/m\u00b3)") +
+  scale_y_continuous(limits = c(-5, 10)) +
   theme(legend.position = "bottom") +
   simple_theme
-ggsave(filename = here::here("Figs/Calibration", "Monthly_Means_PM.jpeg"),
+ggsave(filename = here::here("Figs/Calibration", "Calibrated_PM_by_Campaign.jpeg"),
        height = 4, width = 6, dpi = 500, units = "in", device = "jpeg")
 
-ggplot(filter_data_comp, aes(x = as.factor(season), y = pm, fill = as.factor(type))) +
-  ggtitle("Seasonal distribution of measured and calibrated PM2.5") +
-  geom_boxplot(alpha = 0.75) +
-  scale_fill_viridis(name = "Data Type", discrete = T, 
-                     labels = c("pm_ug_m3" = "Raw Data",
-                                "pm_ug_m3_lm" = "Crude linear model",
-                                "pm_ug_m3_dem" = "Deming model",
-                                "monitor_mean" = "EPA Monitor")) +
-  scale_x_discrete(labels = c("1" = "Winter", "2" = "Spring",
-                              "3" = "Summer", "4" = "Fall")) +
-  xlab("Month") + ylab("PM\u2082.\u2085 (\u03bcg/m\u00b3)") +
-  scale_y_continuous(limits = c(-10, 50)) +
-  theme(legend.position = "bottom") +
-  simple_theme
-ggsave(filename = here::here("Figs/Calibration", "Seasonal_Means_PM.jpeg"),
-       height = 4, width = 6, dpi = 500, units = "in", device = "jpeg")
-
-#' Write out the calibrated dataset
-glimpse(filter_data2)
-write_csv(filter_data2, here::here("Data", "Filter_PM_Calibrated.csv"))
-
-test <- read_csv(here::here("Data", "Filter_PM_Calibrated.csv"))
+#' Write out the calibrated data set
+glimpse(filter_data3)
+write_csv(filter_data3, here::here("Data", "Filter_PM_Calibrated.csv"))
 
 #' Save the calibration models
-#' Save a date-stamped version in case we need to go back
+#' Also save a date-stamped version in case we need to go back
 today <- Sys.Date()
-save(fit_dem, fit_lm, fit_adjlm, 
+save(i25_lm, i25_lm_c2, i25_lm_c3, i25_lm_c4, i25_lm_c5,
+     i25_dem, i25_dem_c2, i25_dem_c3, i25_dem_c4, i25_dem_c5,
+     cal_data, cal_data_c2, cal_data_c3, cal_data_c4, cal_data_c5,
      file = here::here("Results", "Filter_PM_CalModels.rdata"))
 
-save(fit_dem, fit_lm, fit_adjlm, 
+save(i25_lm, i25_lm_c2, i25_lm_c3, i25_lm_c4, i25_lm_c5,
+     i25_dem, i25_dem_c2, i25_dem_c3, i25_dem_c4, i25_dem_c5,
+     cal_data, cal_data_c2, cal_data_c3, cal_data_c4, cal_data_c5,
      file = here::here("Results/Archived_Results", 
                        paste0("Filter_PM_CalModels_", today, ".rdata")))
+
+load(here::here("Results", "Filter_PM_CalModels.rdata"))
+
+cor(i25_dem_c2$model$pm_ug_m3, i25_dem_c2$model$monitor_mean)
+cor(i25_dem_c3$model$pm_ug_m3, i25_dem_c3$model$monitor_mean)
+cor(i25_dem_c4$model$pm_ug_m3, i25_dem_c4$model$monitor_mean)
+cor(i25_dem_c5$model$pm_ug_m3, i25_dem_c5$model$monitor_mean)
+
+#' -----------------------------------------------------------------------------
+#' Plots for papers
+#' -----------------------------------------------------------------------------
+
+load(here::here("Results", "Filter_PM_CalModels.rdata"))
+
+#' Plot BC monitor vs UPAS by campaign
+ggplot() +
+  geom_point(data = cal_data_c2,
+             aes(x = monitor_mean, y = pm_ug_m3, color = campaign), size = 2) +
+  geom_abline(data = cal_data_c2,
+              aes(slope = lm_slope_c2, intercept = lm_int_c2,
+                  color = campaign, linetype = "lm"), size = 1) +
+  geom_abline(data = cal_data_c2,
+              aes(slope = dem_slope_c2, intercept = dem_int_c2,
+                  color = campaign, linetype = "dem"), size = 1) +
+  
+  geom_point(data = cal_data_c3,
+             aes(x = monitor_mean, y = pm_ug_m3, color = campaign), size = 2) +
+  geom_abline(data = cal_data_c3,
+              aes(slope = lm_slope_c3, intercept = lm_int_c3,
+                  color = campaign, linetype = "lm"), size = 1) +
+  geom_abline(data = cal_data_c3,
+              aes(slope = dem_slope_c3, intercept = dem_int_c3,
+                  color = campaign, linetype = "dem"), size = 1) +
+  
+  geom_point(data = cal_data_c4,
+             aes(x = monitor_mean, y = pm_ug_m3, color = campaign), size = 2) +
+  geom_abline(data = cal_data_c4,
+              aes(slope = lm_slope_c4, intercept = lm_int_c4,
+                  color = campaign, linetype = "lm"), size = 1) +
+  geom_abline(data = cal_data_c4,
+              aes(slope = dem_slope_c4, intercept = dem_int_c4,
+                  color = campaign, linetype = "dem"), size = 1) +
+  
+  geom_point(data = cal_data_c5,
+             aes(x = monitor_mean, y = pm_ug_m3, color = campaign), size = 2) +
+  geom_abline(data = cal_data_c5,
+              aes(slope = lm_slope_c5, intercept = lm_int_c5,
+                  color = campaign, linetype = "lm"), size = 1) +
+  geom_abline(data = cal_data_c5,
+              aes(slope = dem_slope_c5, intercept = dem_int_c5,
+                  color = campaign, linetype = "dem"), size = 1) +
+  
+  scale_color_viridis(name = "Campaign", discrete = T,
+                      labels = c("Campaign2" = "Campaign 2",
+                                 "Campaign3" = "Campaign 3",
+                                 "Campaign4" = "Campaign 4",
+                                 "Campaign5" = "Campaign 5")) +
+  scale_linetype_manual(name = "Regression", 
+                        values = c("lm" = 1, "dem" = 2),
+                        labels = c("lm" = "OLS", "dem" = "Deming")) +
+  facet_grid(campaign ~ ., scales = "free") +
+  # facet_grid(. ~ campaign, scales = "free") +
+  ylab("UPAS PM2.5 (\u03pmg/m\u00b3)") + xlab("Monitor PM2.5 (\u03pmg/m\u00b3)") +
+  simple_theme
+ggsave(filename = here::here("Figs/Calibration", "PM_LM_Dem_by_Campaign.jpeg"),
+       height = 7, width = 7, dpi = 500, units = "in", device = "jpeg")
+
+#' Bland-Altman plots 
+library(BlandAltmanLeh)
+library(ggExtra)
+
+scaleFUN <- function(x) sprintf("%.1f", x)
+
+mean_diff_all <- mean(cal_data$pm_ug_m3 - cal_data$monitor_mean)
+ba_plot_all <- bland.altman.plot(cal_data$pm_ug_m3, cal_data$monitor_mean, 
+                                 graph.sys="ggplot2")
+ba_all <- print(ba_plot_all) +
+  geom_hline(aes(yintercept = mean_diff_all), size = 1) +
+  geom_hline(aes(yintercept = 0), linetype = 3, size = 1) +
+  xlab(NULL) + ylab(NULL) +
+  scale_y_continuous(labels=  scaleFUN) + scale_x_continuous(labels = scaleFUN) +
+  simple_theme +
+  theme(plot.margin = margin(1,0.5,0.5,0.5, "cm"))
+ba_all
+
+mean_diff_c2 <- mean(cal_data_c2$pm_ug_m3 - cal_data_c2$monitor_mean)
+ba_plot_c2 <- bland.altman.plot(cal_data_c2$pm_ug_m3, cal_data_c2$monitor_mean, 
+                                graph.sys="ggplot2")
+ba_c2 <- print(ba_plot_c2) +
+  geom_hline(aes(yintercept = mean_diff_c2), size = 1) +
+  geom_hline(aes(yintercept = 0), linetype = 3) +
+  xlab(NULL) + ylab(NULL) +
+  scale_y_continuous(labels=  scaleFUN) + scale_x_continuous(labels = scaleFUN) +
+  simple_theme +
+  theme(plot.margin = margin(1,0.5,0.5,0.5, "cm"))
+ba_c2
+
+mean_diff_c3 <- mean(cal_data_c3$pm_ug_m3 - cal_data_c3$monitor_mean)
+ba_plot_c3 <- bland.altman.plot(cal_data_c3$pm_ug_m3, cal_data_c3$monitor_mean, 
+                                graph.sys="ggplot2")
+ba_c3 <- print(ba_plot_c3) +
+  geom_hline(aes(yintercept = mean_diff_c3), size = 1) +
+  geom_hline(aes(yintercept = 0), linetype = 3) +
+  xlab(NULL) + ylab(NULL) +
+  scale_y_continuous(labels=  scaleFUN) + scale_x_continuous(labels = scaleFUN) +
+  simple_theme +
+  theme(plot.margin = margin(1,0.5,0.5,0.5, "cm"))
+ba_c3
+
+mean_diff_c4 <- mean(cal_data_c4$pm_ug_m3 - cal_data_c4$monitor_mean)
+ba_plot_c4 <- bland.altman.plot(cal_data_c4$pm_ug_m3, cal_data_c4$monitor_mean, 
+                                graph.sys="ggplot2")
+ba_c4 <- print(ba_plot_c4) +
+  geom_hline(aes(yintercept = mean_diff_c4), size = 1) +
+  geom_hline(aes(yintercept = 0), linetype = 3) +
+  xlab(NULL) + ylab(NULL) +
+  scale_y_continuous(labels=  scaleFUN) + scale_x_continuous(labels = scaleFUN) +
+  simple_theme +
+  theme(plot.margin = margin(1,0.5,0.5,0.5, "cm"))
+ba_c4
+
+mean_diff_c5 <- mean(cal_data_c5$pm_ug_m3 - cal_data_c5$monitor_mean)
+ba_plot_c5 <- bland.altman.plot(cal_data_c5$pm_ug_m3, cal_data_c5$monitor_mean, 
+                                graph.sys="ggplot2")
+ba_c5 <- print(ba_plot_c5) +
+  geom_hline(aes(yintercept = mean_diff_c5), size = 1) +
+  geom_hline(aes(yintercept = 0), linetype = 3) +
+  xlab(NULL) + ylab(NULL) +
+  scale_y_continuous(labels=  scaleFUN) + scale_x_continuous(labels = scaleFUN) +
+  simple_theme +
+  theme(plot.margin = margin(1,0.5,0.5,0.5, "cm"))
+ba_c5
+
+library(ggpubr)
+
+all_ba_plots <- ggarrange(plotlist = list(ba_all),
+                          labels = c("A: All Collocated Filters"),
+                          ncol = 1, nrow = 1, vjust = 1, hjust = -0.15)
+all_ba_plots
+
+camp_ba_plots <- ggarrange(plotlist = list(ba_c2, ba_c3, ba_c4, ba_c5),
+                           labels = c("B: Campaign 2", "C: Campaign 3",
+                                      "D: Campaign 4", "E: Campaign 4"),
+                           ncol = 2, nrow = 2, vjust = 1, hjust = -0.15)
+camp_ba_plots
+
+ba_plots <- annotate_figure(
+  ggarrange(all_ba_plots, camp_ba_plots,
+            ncol = 1, nrow = 2),
+  left = text_grob("Difference: UPAS - AE-33 (\u03bcg/m\u00b3)",
+                   rot = 90, face = "bold"),
+  bottom = text_grob("Mean of UPAS and AE-33 BC Measurement (\u03bcg/m\u00b3)",
+                     face = "bold")
+)
+ba_plots
+
+ggsave(ba_plots,
+       filename = here::here("Figs/Calibration", "BA_Plots_Combined_PM.jpeg"),
+       height = 9, width = 7, dpi = 500, units = "in", device = "jpeg")
+

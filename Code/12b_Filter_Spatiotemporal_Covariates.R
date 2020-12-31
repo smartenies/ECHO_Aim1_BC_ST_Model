@@ -43,6 +43,7 @@ counties <- c("001", "005", "013", "014", "031", "059")
 pm_data <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv")) %>% 
   filter(!is.na(Arithmetic_Mean)) %>% 
   st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
   filter(County_Code %in% counties) %>% 
   filter(Sample_Duration != "1 HOUR") %>% 
   arrange(Date_Local, monitor_id)
@@ -51,6 +52,7 @@ pm_data <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv")) %>%
 bc_data <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv")) %>% 
   filter(!is.na(Arithmetic_Mean)) %>% 
   st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
   filter(County_Code %in% counties) %>% 
   arrange(Date_Local, monitor_id)
 
@@ -58,23 +60,25 @@ bc_data <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv")) %>%
 temp_data <- read_csv(here::here("Data", "Monitor_TEMP_Data_AEA.csv")) %>% 
   filter(!is.na(Arithmetic_Mean)) %>% 
   st_as_sf(wkt = "WKT", crs = albers)%>% 
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
   filter(County_Code %in% counties) %>% 
   arrange(Date_Local, monitor_id)
 
 #' NO2
 no2_data <- read_csv(here::here("Data", "Monitor_NO2_Data_AEA.csv")) %>% 
   filter(!is.na(Arithmetic_Mean)) %>% 
-  st_as_sf(wkt = "WKT", crs = albers)%>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
   filter(County_Code %in% counties) %>% 
   arrange(Date_Local, monitor_id)
 
 #' Smoke days
 smoke_data <- read_csv(here::here("Data", "Monitor_Smoke_Days_AEA.csv")) %>%
-  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
   filter(!is.na(smoke_day_1sd)) %>% 
   filter(!is.na(monitor_id)) %>%
   st_as_sf(wkt = "WKT", crs = albers) %>%
-  #filter(County_Code %in% counties) %>% 
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
+  filter(County_Code %in% counties) %>% 
   arrange(Date_Local, monitor_id)
 
 #' -----------------------------------------------------------------------------
@@ -83,7 +87,7 @@ smoke_data <- read_csv(here::here("Data", "Monitor_Smoke_Days_AEA.csv")) %>%
 #' Use each monday date as the "indicator" date
 #' -----------------------------------------------------------------------------
 
-campaign_names <- paste0("Campaign", c(1,2,3,4,5))
+campaign_names <- paste0("Campaign", c(1,2,3,4,5,"X"))
 covariate_names <- c("pm", "bc", "no2", "temp")
 covariate_list <- list(pm_data, bc_data, no2_data, temp_data)
 names(covariate_list) <- covariate_names
@@ -120,7 +124,7 @@ unique_locations <- select(locations_sf, site_id) %>%
 #' -----------------------------------------------------------------------------
 
 # filter_ids <- unique(locations_sf$filter_id)
-filter_ids <- unique_locations$site_id
+site_ids <- unique_locations$site_id
 
 #' List of dates 
 #' Use start of the week as the "indicator" date
@@ -130,11 +134,12 @@ date_list_all <- seq.Date(date_start, date_end, by = "day")
 date_list <- unique(as.Date(cut(as.Date(date_list_all), "week")))
 
 cov_temp <- data.frame()
+options(dplyr.summarise.inform = F)
 
-for (i in 1:length(filter_ids)) {
-  print(paste("Location", i, "of", length(filter_ids)))
+for (i in 1:length(site_ids)) {
+  print(paste("Location", i, "of", length(site_ids)))
   #point <- filter(locations_sf, filter_id == filter_ids[i])
-  point <- filter(unique_locations, site_id == filter_ids[i])
+  point <- filter(unique_locations, site_id == site_ids[i])
   
   temp <- data.frame()
   
@@ -196,7 +201,7 @@ for (i in 1:length(filter_ids)) {
         temp2$area <- mean(cov_area_means$weekly_mean, na.rm=T)
         
         #' Get the value at the distributed site based on IDW of all central sites
-        idw_val <- idw(weekly_mean ~ 1, cov_area_means, point)
+        idw_val <- idw(weekly_mean ~ 1, cov_area_means, point, debug.level = 0)
         
         temp2$idw <- idw_val$var1.pred
         temp2$units <- unique(cov_ranked$Units_of_Measure)
@@ -283,6 +288,8 @@ for (i in 1:length(filter_ids)) {
   cov_temp <- bind_rows(cov_temp, temp)
   rm(temp)
 }
+options(warn=0)
+options(dplyr.summarise.inform = T)
 
 glimpse(cov_temp)
 

@@ -49,12 +49,13 @@ ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
 #' Read in and organize metals XRF
 #' -----------------------------------------------------------------------------
 
-campaign_names <- c("Campaign1", "Campaign2", "Campaign3", "Campaign4")
+
+campaign_names <- paste0("Campaign", c(1, 2, 3, 4, 5))
+
+filter_path <- here::here("Raw_Data/Filter_Data")
+filter_data_list <- list()
 
 standard_area <- 7.065 #centimeters
-
-filter_path <- "R:/RSTOR-Magzamen/Research/Projects/ECHO_Aim1/Raw_Data/Filter_Data/"
-filter_data_list <- list()
 
 for (camp in 1:length(campaign_names)) {
   campaign_name <- campaign_names[camp]
@@ -62,7 +63,7 @@ for (camp in 1:length(campaign_names)) {
   filter_data_name <- paste0("ECHO_Filter_Data_", campaign_name, "_Formatted.xlsx")
   
   #' Read in the black from the Powerhouse
-  filter_data <- read_xlsx(paste0(filter_path, filter_data_name), 
+  filter_data <- read_xlsx(paste0(filter_path, "/", filter_data_name),
                            sheet = "Metals")
   print(sum(duplicated(filter_data$filter_id)))
   
@@ -95,7 +96,7 @@ for (camp in 1:length(campaign_names)) {
     st_as_sf(wkt = "WKT", crs = albers)
   
   filter_data_sf <- left_join(filter_vol_data, locations, by = c("filter_id", "campaign")) %>% 
-    select(-c(Location, geocode_add))
+    select(-c(Location))
   glimpse(filter_data_sf)
   
   #' ---------------------------------------------------------------------------
