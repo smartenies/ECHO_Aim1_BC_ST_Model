@@ -74,7 +74,6 @@ filter_data <- read_csv(here::here("Data", "Filter_BC.csv")) %>%
   filter(!is.na(EndDateLocal)) %>% 
   filter(indoor == 0) %>%
   #' QA filters
-  filter(is.na(bc_below_lod) | bc_below_lod == 0) %>% 
   filter(is.na(is_blank) | is_blank == 0) %>% 
   filter(bc_ug_m3_logged_vol < 10) %>%
   arrange(EndDateLocal)  
@@ -116,6 +115,12 @@ cal_data <- filter(filter_data, filter_id %in% collocated_ids$filter_id) %>%
   left_join(mon_ids, by = "Location") %>% 
   filter(monitor_id == "080310027") %>%
   filter(!is.na(bc_ug_m3))
+
+#' Are any of these data below the LOD?
+table(cal_data$bc_below_lod, cal_data$campaign)
+
+cal_data <- filter(cal_data, bc_below_lod == 0)
+table(cal_data$bc_below_lod, cal_data$campaign)
 
 #'How do the collocated filters compare to all filters
 summary(filter_data$bc_ug_m3)
@@ -404,6 +409,7 @@ rmse(i25_dem_c3$residuals)
 #' -------------------------------------
 #' Campaign 4
 #' Linear and Deming regression
+#' Volume might be an issue here (winter)
 #' -------------------------------------
 
 cal_data_c4 <- filter(cal_data, campaign == "Campaign4")
@@ -411,8 +417,22 @@ cor(cal_data_c4$monitor_mean, cal_data_c4$bc_ug_m3)
 plot(cal_data_c4$monitor_mean, cal_data_c4$bc_ug_m3)
 abline(lm(bc_ug_m3 ~ monitor_mean, data = cal_data_c4))
 
+table(cal_data_c4$low_volume_flag)
+table(cal_data_c4$ultralow_volume_flag)
+
+cal_data_c4_v2 <- filter(cal_data, campaign == "Campaign4" & low_volume_flag == 0)
+cor(cal_data_c4_v2$monitor_mean, cal_data_c4_v2$bc_ug_m3)
+plot(cal_data_c4_v2$monitor_mean, cal_data_c4_v2$bc_ug_m3)
+abline(lm(bc_ug_m3 ~ monitor_mean, data = cal_data_c4_v2))
+
 i25_lm_c4 <- lm(bc_ug_m3 ~ monitor_mean, data = cal_data_c4)
 summary(i25_lm_c4)
+par(mfrow=c(2,2))
+plot(i25_lm_c4)
+par(mfrow=c(1,1))
+
+i25_lm_c4_v2 <- lm(bc_ug_m3 ~ monitor_mean, data = cal_data_c4_v2)
+summary(i25_lm_c4_v2)
 par(mfrow=c(2,2))
 plot(i25_lm_c4)
 par(mfrow=c(1,1))
@@ -422,6 +442,9 @@ lm_slope_c4 <- unname(i25_lm_c4$coefficients[2])
 
 i25_dem_c4 <- deming(bc_ug_m3 ~ monitor_mean, data = cal_data_c4)
 print(i25_dem_c4)
+
+i25_dem_c4_v2 <- deming(bc_ug_m3 ~ monitor_mean, data = cal_data_c4_v2)
+print(i25_dem_c4_v2)
 
 dem_int_c4 <- unname(i25_dem_c4$coefficients[1])
 dem_slope_c4 <- unname(i25_dem_c4$coefficients[2])
@@ -450,6 +473,14 @@ cal_data_c5 <- filter(cal_data, campaign == "Campaign5")
 cor(cal_data_c5$monitor_mean, cal_data_c5$bc_ug_m3)
 plot(cal_data_c5$monitor_mean, cal_data_c5$bc_ug_m3)
 abline(lm(bc_ug_m3 ~ monitor_mean, data = cal_data_c5))
+
+table(cal_data_c5$low_volume_flag)
+table(cal_data_c5$ultralow_volume_flag)
+
+cal_data_c5_v2 <- filter(cal_data, campaign == "Campaign5" & low_volume_flag == 0)
+cor(cal_data_c5_v2$monitor_mean, cal_data_c5_v2$bc_ug_m3)
+plot(cal_data_c5_v2$monitor_mean, cal_data_c5_v2$bc_ug_m3)
+abline(lm(bc_ug_m3 ~ monitor_mean, data = cal_data_c5_v2))
 
 i25_lm_c5 <- lm(bc_ug_m3 ~ monitor_mean, data = cal_data_c5)
 summary(i25_lm_c5)
@@ -484,6 +515,7 @@ rmse(i25_dem_c5$residuals)
 #' -----------------------------------------------------------------------------
 #' Going to calibrate each campaign separately, with Campaigns 1 & 2 together
 #' Going to have a calibrated value using Deming regression and linear regression
+#' Using a reduced set of filters for Campaign 4 (volumes > 4000 L)
 #' -----------------------------------------------------------------------------
 
 #' -------------------------------------
@@ -517,6 +549,18 @@ ggplot(filter_data_c2) +
   scale_color_viridis(name = "Data type", discrete = T) +
   simple_theme
 
+ggplot(filter_data_c2) +
+  geom_point(aes(x = bc_ug_m3_raw, y = bc_ug_m3_dem)) +
+  simple_theme
+
+filter_data_c2_long <- filter_data_c2 %>%
+  select(bc_ug_m3_raw, bc_ug_m3_dem, bc_ug_m3_lm) %>%
+  pivot_longer(cols = bc_ug_m3_raw:bc_ug_m3_lm, 
+               names_to = "reg", values_to = "bc")
+
+ggplot(filter_data_c2_long) +
+  geom_boxplot(aes(x = as.factor(reg), y = bc))
+
 #' -------------------------------------
 #' Campaign 3
 #' -------------------------------------
@@ -546,8 +590,20 @@ ggplot(filter_data_c3) +
   scale_color_viridis(name = "Data type", discrete = T) +
   simple_theme
 
+ggplot(filter_data_c3) +
+  geom_point(aes(x = bc_ug_m3_raw, y = bc_ug_m3_dem)) +
+  simple_theme
+
+filter_data_c3_long <- filter_data_c3 %>%
+  select(bc_ug_m3_raw, bc_ug_m3_dem, bc_ug_m3_lm) %>%
+  pivot_longer(cols = bc_ug_m3_raw:bc_ug_m3_lm, 
+               names_to = "reg", values_to = "bc")
+
+ggplot(filter_data_c3_long) +
+  geom_boxplot(aes(x = as.factor(reg), y = bc))
+
 #' -------------------------------------
-#' Campaign 4
+#' Campaign 4 (remember to drop low vols)
 #' -------------------------------------
 
 filter_data_c4 <- filter(filter_data, campaign == "Campaign4")
@@ -575,6 +631,18 @@ ggplot(filter_data_c4) +
   xlab("Time-weighted average UPAS BC (\u03bcg/m\u00b3)") +
   scale_color_viridis(name = "Data type", discrete = T) +
   simple_theme
+
+ggplot(filter_data_c4) +
+  geom_point(aes(x = bc_ug_m3_raw, y = bc_ug_m3_dem)) +
+  simple_theme
+
+filter_data_c4_long <- filter_data_c4 %>%
+  select(bc_ug_m3_raw, bc_ug_m3_dem, bc_ug_m3_lm) %>%
+  pivot_longer(cols = bc_ug_m3_raw:bc_ug_m3_lm, 
+               names_to = "reg", values_to = "bc")
+
+ggplot(filter_data_c4_long) +
+  geom_boxplot(aes(x = as.factor(reg), y = bc))
 
 #' -------------------------------------
 #' Campaign 5

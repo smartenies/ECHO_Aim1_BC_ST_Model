@@ -1,0 +1,1361 @@
+---
+title: "Fitting the ST model for black carbon in Denver, CO"
+author: "Sheena Martenies"
+date: "01/05/2021"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warnings = F)
+```
+
+# Introduction
+
+In this script, we are building the spatiotemporal prediction model for black carbon in the Denver metro area. This model uses data from 5 sampling campaigns (as detailed in 15_Exploring_BC_Data.R). Two models are developed here: one which uses one temporal basis function (Model A) and one that uses two temporal basis functions (Model B).
+
+Updates to this model are in response to reviewer comments on an earlier manuscript version submitted to ES&T.
+
+A summary table at the end of the document summarizes the performance for each of these models. Overall, Model B performs well and allows us to predict BC concentrations at a weekly temporal resolution from 2009 through 2020.
+
+```{r, echo = F}
+# library(devtools)
+# install_version("SpatioTemporal", version = "1.1.9.1", repos = "https://cran.r-project.org")
+
+library(SpatioTemporal)
+library(numDeriv)
+library(Matrix)
+library(plotrix)
+library(maps)
+```
+
+```{r, echo = F, include = F, warnings = F}
+library(sf)
+library(gstat)
+library(sp)
+library(raster)
+library(ggplot2)
+library(ggmap)
+library(ggsn)
+library(ggthemes)
+library(extrafont)
+library(GGally)
+library(ggcorrplot)
+library(stringr)
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(viridis)
+library(caret)
+library(knitr)
+library(kableExtra)
+
+#' For ggplots
+# loadfonts(device = "win")
+
+simple_theme <- theme(
+  #aspect.ratio = 1,
+  text  = element_text(size = 12, color = 'black'),
+  panel.spacing.y = unit(0,"cm"),
+  panel.spacing.x = unit(0.25, "lines"),
+  panel.grid.minor = element_line(color = "grey90"),
+  panel.grid.major = element_line(color = "grey90"),
+  panel.border=element_rect(fill = NA),
+  panel.background=element_blank(),
+  axis.ticks = element_line(colour = "black"),
+  axis.text = element_text(color = "black", size=10),
+  # legend.position = c(0.1,0.1),
+  plot.margin=grid::unit(c(0,0,0,0), "mm"),
+  legend.key = element_blank()
+)
+
+options(scipen = 9999) #avoid scientific notation
+
+albers <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
+ll_nad83 <- "+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0"
+ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+```
+
+# Developing data sets
+
+## Denver data set
+Here I'm reading in the filter data sets and getting them into the right shape for the ```SpatioTemporal``` package. Here the ST covariates cover the entire study period (2009 - 2020).
+
+```{r}
+
+data_name <- "Combined_Filter_Data_AEA.csv"
+all_data <- read_csv(here::here("Data", data_name))
+
+#' Select a "calibrated" version of the data
+#' For now, go with Deming regression-- accounts for variability in the
+#' monitor and the UPAS data and the temporal mismatch in TWAs
+all_data$bc_ug_m3 <- all_data$bc_ug_m3_dem
+all_data$pm_ug_m3 <- all_data$pm_ug_m3_dem
+
+#' List of sites that failed preliminary screening (see 15_Exploring_BC_Data.R)
+#' These are all the sites (by campaign) where BC measurements had a CV > 30%
+#' Note that all of these are in Campaign 4
+cv_drop <- read_csv(here::here("Data/Dropped_Sites_by_Campaign.csv"))
+
+filter_data <- filter(all_data, is.na(filter_id) | filter_id != "080310027") %>%
+  filter(is.na(indoor) | indoor == 0) %>%
+  filter(is.na(is_blank) | is_blank == 0) %>% 
+  #' QA filters
+  filter(is.na(bc_below_lod) | bc_below_lod == 0) %>% 
+  filter(is.na(negative_pm_mass) | negative_pm_mass == 0) %>% 
+  filter(is.na(potential_contamination) | potential_contamination == 0)
+
+dist_data <- bind_rows(filter(filter_data, is.na(campaign) | campaign != "Campaign4"),
+                       filter(filter_data, campaign == "Campaign4" & !(site_id %in% cv_drop$site_id))) %>%
+  arrange(st_week)
+head(dist_data$sample_week)
+tail(dist_data$sample_week)
+head(dist_data$st_week)
+tail(dist_data$st_week)
+
+length(unique(dist_data$filter_id))
+summary(dist_data$bc_ug_m3)
+quantile(dist_data$bc_ug_m3, probs = c(0.05, 0.95), na.rm = T)
+sd(dist_data$bc_ug_m3, na.rm = T)
+sd(dist_data$bc_ug_m3, na.rm = T) / mean(dist_data$bc_ug_m3, na.rm = T)
+
+#' All of the dropped data should be in Campaign 4
+dropped_data <- filter(filter_data, campaign == "Campaign4" & site_id %in% cv_drop$site_id)
+length(unique(dropped_data$filter_id))
+summary(dropped_data$bc_ug_m3)
+quantile(dropped_data$bc_ug_m3, probs = c(0.05, 0.95))
+sd(dropped_data$bc_ug_m3)
+sd(dropped_data$bc_ug_m3) / mean(dropped_data$bc_ug_m3)
+
+#' central site data
+central_data <- filter(all_data, filter_id == "080310027") %>%
+  arrange(st_week)
+head(central_data$sample_week)
+tail(central_data$sample_week)
+head(central_data$st_week)
+tail(central_data$st_week)
+
+#' Add prefix to site_ids
+unique(dist_data$site_id)
+dist_data$site_id <- paste0("d_", dist_data$site_id)
+unique(dist_data$site_id)
+
+unique(central_data$site_id)
+central_data$site_id <- "central"
+unique(central_data$site_id)
+
+#' put these data sets back together
+lur_data <- bind_rows(dist_data, central_data) %>%
+  arrange(site_id, st_week)
+head(lur_data$st_week)
+tail(lur_data$st_week)
+
+#' Log-transformed BC observations with NA values for the missing dates
+#' Note that campaign 5 has duplicate measures, so we need to average them
+bc_obs <- lur_data %>%
+  dplyr::select(site_id, st_week, bc_ug_m3) %>%
+  group_by(site_id, st_week) %>%
+  summarize(bc_ug_m3 = mean(bc_ug_m3, na.rm = T)) %>%
+  mutate(bc_ug_m3 = ifelse(is.nan(bc_ug_m3), NA, bc_ug_m3)) %>%
+  mutate(log_bc = log(bc_ug_m3)) %>%
+  dplyr::select(-bc_ug_m3) 
+
+#' Pivot to a wide data frame
+bc_obs2 <- bc_obs %>%
+  pivot_wider(id_cols = st_week, names_from = site_id, values_from = log_bc) %>%
+  # names_from = site_id, values_from = bc_ug_m3) %>%
+  as.data.frame() %>%
+  arrange(st_week)
+rownames(bc_obs2) <- bc_obs2$st_week
+bc_obs2$st_week <- NULL
+bc_obs2 <- as.matrix(bc_obs2)
+
+bc_weeks <- rownames(bc_obs2)
+tail(bc_weeks)
+
+#' Spatial covariates (scaled)
+load(here::here("Results", "BC_LASSO_Model_5C.Rdata"))
+
+lasso_coef_df <- data.frame(name = log_bc_lasso_coef4@Dimnames[[1]][log_bc_lasso_coef4@i + 1],
+                            coefficient = log_bc_lasso_coef4@x)
+covars <- as.character(lasso_coef_df$name[-1])
+covars 
+
+covar_fun <- paste("~", paste(covars, collapse = " + "))
+covar_fun
+
+bc_sp_cov <- dplyr::select(lur_data, site_id, lon, lat, all_of(covars)) %>%
+  distinct() %>%
+  mutate_at(.vars = vars(all_of(covars)),
+            scale)
+
+bc_sp_cov <- bc_sp_cov %>%
+  rename(ID = site_id) %>%
+  mutate(lon2 = lon, lat2 = lat) %>%
+  st_as_sf(coords = c("lon2", "lat2"), crs = ll_wgs84) %>%
+  st_transform(crs = albers)
+sp_coords <- do.call(rbind, st_geometry(bc_sp_cov)) %>% as_tibble()
+names(sp_coords) <- c("x", "y")
+
+bc_sp_cov <- bind_cols(bc_sp_cov, sp_coords) %>%
+  st_set_geometry(NULL) %>%
+  as.data.frame()
+
+bc_sp_cov$type <- ifelse(bc_sp_cov$ID == "central", "central", "dist")
+bc_sp_cov$type <- as.factor(bc_sp_cov$type)
+
+cor(bc_sp_cov[,covars])
+
+#' NO2, and smoke spatiotemporal predictors
+#' NO2 at each site estimated using IDW
+bc_st_no2 <- dplyr::select(lur_data, site_id, st_week, idw_no2) %>%
+  distinct() %>%
+  arrange(st_week) %>%
+  pivot_wider(id_cols = st_week,
+              names_from = site_id, values_from = idw_no2) %>%
+  as.data.frame()
+rownames(bc_st_no2) <- bc_st_no2$st_week
+bc_st_no2$st_week <- NULL
+bc_st_no2 <- as.matrix(bc_st_no2)
+
+no2_weeks <- rownames(bc_st_no2)
+tail(no2_weeks)
+setdiff(bc_weeks, no2_weeks)
+
+#' Smoke day indicator variable based on WFS paper method (see Brey and Fischer, 2016)
+#' based on any smoke variable in the area using the 2 sd cut-off (area_smoke_2sd)
+bc_st_smk <- dplyr::select(lur_data, site_id, st_week, area_smoke_2sd) %>%
+  distinct() %>%
+  arrange(st_week) %>%
+  pivot_wider(id_cols = st_week,
+              names_from = site_id, values_from = area_smoke_2sd) %>%
+  as.data.frame()
+rownames(bc_st_smk) <- bc_st_smk$st_week
+bc_st_smk$st_week <- NULL
+bc_st_smk <- as.matrix(bc_st_smk)
+
+smk_weeks <- rownames(bc_st_smk)
+tail(smk_weeks)
+setdiff(bc_weeks, smk_weeks)
+```
+
+Create a new ```denver.data``` object. 
+
+```{r}
+denver.data <- createSTdata(obs = bc_obs2,
+                            covars = bc_sp_cov,
+                            SpatioTemporal = list(bc_st_no2 = bc_st_no2,
+                                                  bc_st_smk = bc_st_smk))
+D <- createDataMatrix(denver.data)
+denver.data
+```
+
+## Creating the NO2, BC, and PM data objects
+
+Next we need to combine monitoring data for NO2, BC, and PM2.5 in order to calculate the time trends.
+
+First up: NO2
+```{r, include = F}
+
+#' Denver Metro area counties
+counties <- c("001", "005", "013", "014", "031", "059")
+
+#' NO2 concentrations
+no2_data <- read_csv(here::here("Data", "Monitor_NO2_Data_AEA.csv")) %>% 
+  filter(!is.na(Arithmetic_Mean)) %>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
+  filter(County_Code %in% counties) %>% 
+  arrange(Date_Local, monitor_id) %>%
+  mutate(Arithmetic_Mean = ifelse(Arithmetic_Mean <= 0, NA, Arithmetic_Mean))
+head(no2_data$Date_Local)
+tail(no2_data$Date_Local)
+
+#' Drop monitor 080590006 because it was installed too recently and there isn't a long-term record
+no2_data <- filter(no2_data, monitor_id != "080590006")
+length(unique(no2_data$monitor_id))
+
+#' Add an identifier to differentiate these measurements from collocated pollutants at the same site
+no2_data$monitor_id <- paste0(no2_data$monitor_id, "_no2")
+unique(no2_data$monitor_id)
+```
+
+Plot the time trends for NO2 at the monitors
+
+**Original units (ppb)**
+```{r}
+no2_ts <- ggplot(data = no2_data, aes(x = Date_Local, y = Arithmetic_Mean)) +
+  geom_point(aes(color = as.factor(monitor_id)), shape = 20, size = 1) +
+  geom_smooth(se = F, color = "black", method = "gam") +
+  scale_color_viridis(name = "Monitor ID", discrete = T) +
+  scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
+  facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  simple_theme
+no2_ts
+```
+
+**Log-transformed NO2**
+```{r}
+no2_ts2 <- ggplot(data = no2_data, aes(x = Date_Local, y = log(Arithmetic_Mean))) +
+  geom_point(aes(color = as.factor(monitor_id)), shape = 20, size = 1) +
+  geom_smooth(se = F, color = "black", method = "gam") +
+  scale_color_viridis(name = "Monitor ID", discrete = T) +
+  scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
+  facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  simple_theme
+no2_ts2
+```
+
+Organize the observations and spatial data. **Use the log-transformed NO2 here**
+```{r}
+
+#' NO2 observations
+no2_obs <- no2_data %>% 
+  st_set_geometry(NULL) %>%
+  dplyr::select(monitor_id, Date_Local, Arithmetic_Mean) %>%
+  mutate(st_week = as.character(as.Date(cut(as.Date(Date_Local), "week")))) %>%
+  filter(st_week %in% bc_weeks) %>% 
+  group_by(monitor_id, st_week) %>%
+  mutate(log_mean = log(Arithmetic_Mean)) %>% 
+  summarize(no2 = mean(log_mean, na.rm=T)) %>%
+  pivot_wider(id_cols = st_week,
+              names_from = monitor_id, values_from = no2) %>%
+  as.data.frame() %>%
+  arrange(st_week)
+head(no2_obs)
+head(no2_obs$st_week)
+tail(no2_obs$st_week)
+
+# NO2 SP object
+no2_data2 <- read_csv(here::here("Data", "Monitor_NO2_Data_AEA.csv")) %>%
+  mutate(year = year(Date_Local)) %>% 
+  dplyr::select(-year) %>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(monitor_id = paste0(monitor_id, "_no2")) %>% 
+  filter(monitor_id %in% colnames(no2_obs))
+
+no2_coords <- do.call(rbind, st_geometry(no2_data2)) %>% as_tibble() 
+names(no2_coords) <- c("x", "y")
+no2_sp_lonlat <- no2_data2 %>%
+  st_transform(crs = ll_wgs84)
+no2_coords2 <- do.call(rbind, st_geometry(no2_sp_lonlat)) %>%
+  as_tibble() %>% setNames(c("lon","lat"))
+
+no2_sp_cov <- st_set_geometry(no2_data2, NULL) %>%
+  dplyr::select(monitor_id) %>%
+  rename(ID = monitor_id)
+no2_sp_cov <- bind_cols(no2_sp_cov, no2_coords, no2_coords2) %>%
+  as.data.frame() %>%
+  distinct()
+```
+
+Next, BC at the central site monitor
+```{r}
+#' BC central site concentrations
+bc_cent_data <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv")) %>% 
+  filter(!is.na(Arithmetic_Mean)) %>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
+  filter(County_Code %in% counties) %>% 
+  arrange(Date_Local, monitor_id) %>%
+  mutate(Arithmetic_Mean = ifelse(Arithmetic_Mean <= 0.005, NA, Arithmetic_Mean))
+head(bc_cent_data$Date_Local)
+tail(bc_cent_data$Date_Local)
+
+#' Add an identifier to differentiate these measurements from collocated pollutants at the same site
+bc_cent_data$monitor_id <- paste0(bc_cent_data$monitor_id, "_bc")
+unique(bc_cent_data$monitor_id)
+```
+
+Plot the time trends for BC at the central site monitor
+
+**Original units (ug/m3)** 
+```{r}
+bc_ts <- ggplot(data = bc_cent_data, aes(x = Date_Local, y = Arithmetic_Mean)) +
+  geom_point(aes(color = as.factor(monitor_id)), shape = 20, size = 1) +
+  geom_smooth(se = F, color = "black", method = "gam") +
+  scale_color_viridis(name = "Monitor ID", discrete = T) +
+  scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
+  #facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  simple_theme
+bc_ts
+```
+
+**Log-transformed BC** 
+```{r}
+bc_ts2 <- ggplot(data = bc_cent_data, aes(x = Date_Local, y = log(Arithmetic_Mean))) +
+  geom_point(aes(color = as.factor(monitor_id)), shape = 20, size = 1) +
+  geom_smooth(se = F, color = "black") +
+  scale_color_viridis(name = "Monitor ID", discrete = T) +
+  scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
+  #facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  simple_theme
+bc_ts2
+```
+
+Organize the observations and spatial data
+
+**Use log-transformed data here**
+```{r}
+#' BC observations
+bc_cent_obs <- bc_cent_data %>% 
+  st_set_geometry(NULL) %>%
+  dplyr::select(monitor_id, Date_Local, Arithmetic_Mean) %>%
+  mutate(st_week = as.character(as.Date(cut(as.Date(Date_Local), "week")))) %>%
+  filter(st_week %in% bc_weeks) %>% 
+  group_by(monitor_id, st_week) %>%
+  mutate(log_mean = log(Arithmetic_Mean)) %>% 
+  summarize(bc = mean(log_mean, na.rm=T)) %>%
+  pivot_wider(id_cols = st_week,
+              names_from = monitor_id, values_from = bc) %>%
+  as.data.frame() %>%
+  arrange(st_week)
+head(bc_cent_obs)
+head(bc_cent_obs$st_week)
+tail(bc_cent_obs$st_week)
+
+# BC Central Site SP object
+bc_cent_data2 <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv")) %>%
+  mutate(year = year(Date_Local)) %>% 
+  dplyr::select(-year) %>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(monitor_id = paste0(monitor_id, "_bc")) %>% 
+  filter(monitor_id %in% colnames(bc_cent_obs))
+
+bc_cent_coords <- do.call(rbind, st_geometry(bc_cent_data2)) %>% as_tibble() 
+names(bc_cent_coords) <- c("x", "y")
+bc_cent_sp_lonlat <- bc_cent_data2 %>%
+  st_transform(crs = ll_wgs84)
+bc_cent_coords2 <- do.call(rbind, st_geometry(bc_cent_sp_lonlat)) %>%
+  as_tibble() %>% setNames(c("lon","lat"))
+
+bc_cent_sp_cov <- st_set_geometry(bc_cent_data2, NULL) %>%
+  dplyr::select(monitor_id) %>%
+  rename(ID = monitor_id)
+bc_cent_sp_cov <- bind_cols(bc_cent_sp_cov, bc_cent_coords, bc_cent_coords2) %>%
+  as.data.frame() %>%
+  distinct()
+```
+
+Lastly, PM2.5 from select monitors with long-term records
+
+```{r, include = F}
+#' PM2.5 concentrations
+pm_data <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv")) %>% 
+  filter(!is.na(Arithmetic_Mean)) %>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
+  filter(County_Code %in% counties) %>% 
+  filter(Sample_Duration != "1 HOUR") %>% 
+  arrange(Date_Local, monitor_id)
+head(pm_data$Date_Local)
+tail(pm_data$Date_Local)
+
+#' Exclude monitors with really short-term records
+pm_data <- filter(pm_data, monitor_id != '080310013')
+length(unique(pm_data$monitor_id))
+
+#' Add an identifier to differentiate these measurements from collocated pollutants at the same site
+pm_data$monitor_id <- paste0(pm_data$monitor_id, "_pm")
+unique(pm_data$monitor_id)
+```
+
+Plot the time trends for PM2.5 at the monitors
+
+**Original units (ug/m3)**
+```{r}
+pm_ts <- ggplot(data = pm_data, aes(x = Date_Local, y = Arithmetic_Mean)) +
+  geom_point(aes(color = as.factor(monitor_id)), shape = 20, size = 1) +
+  geom_smooth(se = F, color = "black") +
+  scale_color_viridis(name = "Monitor ID", discrete = T) +
+  scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
+  facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  simple_theme
+pm_ts
+```
+
+**Log-transformed PM2.5**
+```{r}
+pm_ts2 <- ggplot(data = pm_data, aes(x = Date_Local, y = log(Arithmetic_Mean))) +
+  geom_point(aes(color = as.factor(monitor_id)), shape = 20, size = 1) +
+  geom_smooth(se = F, color = "black", method = "gam") +
+  scale_color_viridis(name = "Monitor ID", discrete = T) +
+  scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
+  facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  simple_theme
+pm_ts2
+```
+
+Organize the observations and spatial data
+
+**Use the log-transformed data here**
+```{r}
+
+#' PM2.5 observations
+pm_obs <- pm_data %>% 
+  st_set_geometry(NULL) %>%
+  dplyr::select(monitor_id, Date_Local, Arithmetic_Mean) %>%
+  mutate(st_week = as.character(as.Date(cut(as.Date(Date_Local), "week")))) %>%
+  filter(st_week %in% bc_weeks) %>% 
+  group_by(monitor_id, st_week) %>%
+  mutate(log_mean = log(Arithmetic_Mean)) %>% 
+  summarize(pm = mean(log_mean, na.rm=T)) %>%
+  pivot_wider(id_cols = st_week,
+              names_from = monitor_id, values_from = pm) %>%
+  as.data.frame() %>%
+  arrange(st_week)
+head(pm_obs)
+head(pm_obs$st_week)
+tail(pm_obs$st_week)
+
+# PM SP object
+pm_data2 <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv")) %>%
+  mutate(year = year(Date_Local)) %>% 
+  dplyr::select(-year) %>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(monitor_id = paste0(monitor_id, "_pm")) %>% 
+  filter(monitor_id %in% colnames(pm_obs))
+
+pm_coords <- do.call(rbind, st_geometry(pm_data2)) %>% as_tibble() 
+names(pm_coords) <- c("x", "y")
+pm_sp_lonlat <- pm_data2 %>%
+  st_transform(crs = ll_wgs84)
+pm_coords2 <- do.call(rbind, st_geometry(pm_sp_lonlat)) %>%
+  as_tibble() %>% setNames(c("lon","lat"))
+
+pm_sp_cov <- st_set_geometry(pm_data2, NULL) %>%
+  dplyr::select(monitor_id) %>%
+  rename(ID = monitor_id)
+pm_sp_cov <- bind_cols(pm_sp_cov, pm_coords, pm_coords2) %>%
+  as.data.frame() %>%
+  distinct()
+```
+
+Combine the observations and the spatial covariates
+Scale the pollutant measurements
+```{r}
+#' Join log-transformed observations
+pol_obs <- left_join(no2_obs, bc_cent_obs, by = "st_week") %>% 
+  left_join(pm_obs, by = "st_week")
+glimpse(pol_obs)
+
+rownames(pol_obs) <- pol_obs$st_week
+pol_obs$st_week <- NULL
+pol_obs <- as.matrix(pol_obs)
+
+#' Scale the measurements to avoid issues where units are different
+#' Remember! These have been log-transformed before scaling
+#' Scale the data by columns (monitors)
+rnames <- rownames(pol_obs)
+cnames <- colnames(pol_obs)
+
+pol_obs <- apply(pol_obs, 2, scale)
+
+rownames(pol_obs) <- rnames
+colnames(pol_obs) <- cnames
+
+head(rownames(pol_obs))
+tail(rownames(pol_obs))
+head(colnames(pol_obs))
+class(pol_obs)
+dim(pol_obs)
+
+#' SP variables
+pol_sp_cov <- bind_rows(no2_sp_cov, bc_cent_sp_cov, pm_sp_cov)
+pol_sp_cov
+```
+
+Create the data object
+```{r}
+pol_STdata <- createSTdata(obs = pol_obs,
+                           covars = pol_sp_cov)
+print(pol_STdata)
+```
+
+## Generate the temporal trend 
+
+The cross validation results for generating the time trends suggest 2 basis functions is the way to go, but let's see if that holds up with our data
+
+```{r}
+D_pol <- createDataMatrix(pol_STdata)
+#D_pol
+
+n_years <- length(2009:2020)
+n_years*4
+n_years*8
+
+#' Trying 4 df per year
+pol.SVD.cv.4py <- SVDsmoothCV(D_pol, 0:4, df = n_years * 4)
+print(pol.SVD.cv.4py)
+plot(pol.SVD.cv.4py)
+
+#' Trying 8 df per year
+pol.SVD.cv.8py <- SVDsmoothCV(D_pol, 0:4, df = n_years * 8)
+print(pol.SVD.cv.8py)
+plot(pol.SVD.cv.8py)
+```
+
+## Plot the time trends
+
+I tried using 1 and 2 basis functions for the time trends. I also checked out 4 and 8 df per year
+
+### 1 basis function
+First, see what the time trends for the monitoring data look like with 1 basis function. 
+
+**4 df per year**
+```{r}
+pol_STdata1 <- updateTrend(pol_STdata, n.basis = 1, df = n_years * 4)
+pol_STdata1
+
+head(pol_STdata1$trend)
+tail(pol_STdata1$trend)
+plot(pol_STdata1$trend$date, pol_STdata1$trend$V1, col = 1, pch = 16, cex = 0.5,
+     xlab = "Date", ylab = "Pollutants (scaled)")
+lines(pol_STdata1$trend$date, pol_STdata1$atrend$V1, col = 1)
+```
+
+**8 df per year**
+```{r}
+pol_STdata1a <- updateTrend(pol_STdata, n.basis = 1, df = n_years * 8)
+pol_STdata1a
+
+head(pol_STdata1a$trend)
+tail(pol_STdata1a$trend)
+plot(pol_STdata1a$trend$date, pol_STdata1a$trend$V1, col = 1, pch = 16, cex = 0.5,
+     xlab = "Date", ylab = "Pollutants (scaled)")
+lines(pol_STdata1a$trend$date, pol_STdata1a$atrend$V1, col = 1)
+```
+
+### 2 basis functions
+Next, let's see what 2 basis functions look like:
+
+**4 df per year**
+```{r}
+pol_STdata2 <- updateTrend(pol_STdata, n.basis = 2, df = n_years * 4)
+pol_STdata2
+
+head(pol_STdata2$trend)
+tail(pol_STdata2$trend)
+plot(pol_STdata2$trend$date, pol_STdata2$trend$V1, col = 1, pch = 16, cex = 0.5,
+     xlab = "Date", ylab = "Pollutants (scaled)")
+points(pol_STdata2$trend$date, pol_STdata2$trend$V2, col = 2, pch = 16, cex = 0.5)
+lines(pol_STdata2$trend$date, pol_STdata2$trend$V1, col = 1)
+lines(pol_STdata2$trend$date, pol_STdata2$trend$V2, col = 2)
+```
+
+**8 df per year**
+```{r}
+pol_STdata2a <- updateTrend(pol_STdata, n.basis = 2, df = n_years * 8)
+pol_STdata2a
+
+head(pol_STdata2a$trend)
+tail(pol_STdata2a$trend)
+plot(pol_STdata2a$trend$date, pol_STdata2a$trend$V1, col = 1, pch = 16, cex = 0.5,
+     xlab = "Date", ylab = "Pollutants (scaled)")
+points(pol_STdata2a$trend$date, pol_STdata2a$trend$V2, col = 2, pch = 16, cex = 0.5)
+lines(pol_STdata2a$trend$date, pol_STdata2a$trend$V1, col = 1)
+lines(pol_STdata2a$trend$date, pol_STdata2a$trend$V2, col = 2)
+```
+
+## Update the Denver data set
+
+The next step is to update the trend data for the ```denver.data``` object and see if these trend data fit our observations.
+
+Comparing the plots using one basis function vs. two basis functions, it looks like using two basis functions might be better than 1. There was some residual autocorrelation in the central site monitor data when using just one basis function (see the fourth plot in the first series of plots below). Using 8 degrees of freedom did not help.
+
+Using two basis functions helped somewhat to reduce this autocorrelation, but it still persists. There are still some noticable trends in the residuals for the central monitoring site
+
+### 1 basis function, 4 df per year
+
+First update the trend data, then plot the trends for three distributed sites and the central BC monitoring site. 
+
+```{r}
+denver.data2.1 <- denver.data
+denver.data2.1$trend <- pol_STdata1$trend
+print(denver.data2.1)
+```
+
+```{r}
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.1, "obs", ID="d_1", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_1")
+plot(denver.data2.1, "res", ID="d_1", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.1, "acf", ID="d_1")
+plot(denver.data2.1, "pacf", ID="d_1")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.1, "obs", ID="d_10", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_43")
+plot(denver.data2.1, "res", ID="d_10", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.1, "acf", ID="d_10")
+plot(denver.data2.1, "pacf", ID="d_10")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.1, "obs", ID="d_43", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_43")
+plot(denver.data2.1, "res", ID="d_43", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.1, "acf", ID="d_43")
+plot(denver.data2.1, "pacf", ID="d_43")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.1, "obs", ID="d_53", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_53")
+plot(denver.data2.1, "res", ID="d_53", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.1, "acf", ID="d_53")
+plot(denver.data2.1, "pacf", ID="d_53")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.1, "obs", ID="central", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend central")
+plot(denver.data2.1, "res", ID="central", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.1, "acf", ID="central")
+plot(denver.data2.1, "pacf", ID="central")
+```
+
+### 1 basis function, 8 df per year
+
+```{r}
+denver.data2.1a <- denver.data
+denver.data2.1a$trend <- pol_STdata1a$trend
+print(denver.data2.1a)
+```
+
+```{r}
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.1a, "obs", ID="d_1", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_1")
+plot(denver.data2.1a, "res", ID="d_1", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.1a, "acf", ID="d_1")
+plot(denver.data2.1a, "pacf", ID="d_1")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.1a, "obs", ID="d_10", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_43")
+plot(denver.data2.1a, "res", ID="d_10", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.1a, "acf", ID="d_10")
+plot(denver.data2.1a, "pacf", ID="d_10")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.1a, "obs", ID="d_43", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_43")
+plot(denver.data2.1a, "res", ID="d_43", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.1a, "acf", ID="d_43")
+plot(denver.data2.1a, "pacf", ID="d_43")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.1a, "obs", ID="d_53", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_53")
+plot(denver.data2.1a, "res", ID="d_53", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.1a, "acf", ID="d_53")
+plot(denver.data2.1a, "pacf", ID="d_53")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.1a, "obs", ID="central", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend central")
+plot(denver.data2.1a, "res", ID="central", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.1a, "acf", ID="central")
+plot(denver.data2.1a, "pacf", ID="central")
+```
+
+### 2 basis functions, 4 df per year
+
+```{r}
+denver.data2.2 <- denver.data
+denver.data2.2$trend <- pol_STdata2$trend
+print(denver.data2.2)
+```
+
+```{r}
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.2, "obs", ID="d_1", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_1")
+plot(denver.data2.2, "res", ID="d_1", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.2, "acf", ID="d_1")
+plot(denver.data2.2, "pacf", ID="d_1")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.2, "obs", ID="d_10", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_10")
+plot(denver.data2.2, "res", ID="d_10", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.2, "acf", ID="d_10")
+plot(denver.data2.2, "pacf", ID="d_10")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.2, "obs", ID="d_43", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_43")
+plot(denver.data2.2, "res", ID="d_43", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.2, "acf", ID="d_43")
+plot(denver.data2.2, "pacf", ID="d_43")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.2, "obs", ID="d_53", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_53")
+plot(denver.data2.2, "res", ID="d_53", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.2, "acf", ID="d_53")
+plot(denver.data2.2, "pacf", ID="d_53")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.2, "obs", ID="central", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend central")
+plot(denver.data2.2, "res", ID="central", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.2, "acf", ID="central")
+plot(denver.data2.2, "pacf", ID="central")
+```
+
+### 2 basis functions, 8 df per year
+
+```{r}
+denver.data2.2a <- denver.data
+denver.data2.2a$trend <- pol_STdata2a$trend
+print(denver.data2.2a)
+```
+
+```{r}
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.2a, "obs", ID="d_1", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_1")
+plot(denver.data2.2a, "res", ID="d_1", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.2a, "acf", ID="d_1")
+plot(denver.data2.2a, "pacf", ID="d_1")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.2a, "obs", ID="d_10", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_10")
+plot(denver.data2.2a, "res", ID="d_10", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.2a, "acf", ID="d_10")
+plot(denver.data2.2a, "pacf", ID="d_10")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.2a, "obs", ID="d_43", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_43")
+plot(denver.data2.2a, "res", ID="d_43", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.2a, "acf", ID="d_43")
+plot(denver.data2.2a, "pacf", ID="d_43")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.2a, "obs", ID="d_53", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend d_53")
+plot(denver.data2.2a, "res", ID="d_53", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.2a, "acf", ID="d_53")
+plot(denver.data2.2a, "pacf", ID="d_53")
+
+par(mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+layout(matrix(c(1,1,2,2,3,4), 3, 2, byrow=TRUE))
+plot(denver.data2.2a, "obs", ID="central", xlab="", ylab="BC (log ug/m3)",
+     main="Temporal trend central")
+plot(denver.data2.2a, "res", ID="central", xlab="", ylab="BC (log ug/m3)")
+plot(denver.data2.2a, "acf", ID="central")
+plot(denver.data2.2a, "pacf", ID="central")
+```
+
+# Testing possible models
+
+Building on the results of the previous modeling efforts, I'm going to update "Model 4.2", which used an '```exp``` covariance structure for the error term and ```iid```  for the beta fields.
+
+## Model A: 1 temporal trend (basis) function (4 df per year)
+
+### Create the model object
+For this version of the model, use ```iid``` for ```cov.beta``` (beta, beta1) and ```exp``` for ```cov.nu``` (error).
+Here we can specify different LUR formluae. The length of the LUR list should be number of basis functions + 1.
+
+```{r}
+denver.data.A <- denver.data2.1
+names(denver.data.A$covars)
+
+LUR.A <- list(covar_fun, covar_fun)
+
+cov.beta.A <-  list(covf = c("iid", "iid"), nugget = T)
+cov.nu.A <- list(covf = "exp", nugget = T, random.effect = FALSE)
+locations.A <- list(coords = c("x","y"), long.lat = c("lon","lat"), others= "type")
+
+denver.model.A <- createSTmodel(denver.data.A, LUR = LUR.A,
+                                ST = c("bc_st_no2", "bc_st_smk"),
+                                cov.beta = cov.beta.A, cov.nu = cov.nu.A,
+                                locations = locations.A)
+denver.model.A
+```
+
+### Estimate model parameters
+
+- nugget values can range from -1 to -6
+- range values can range from 0 to 4
+- try starting values where the sill and nugget are the same (e.g., both 0) and where they are very different (e.g., 0 and -5)
+- make sure the starting values are pretty different
+
+```{r}
+set.seed(1000)
+
+names <- loglikeSTnames(denver.model.A, all=FALSE)
+names
+
+# x.init.A <- cbind(c(0, 0, 0, 0, 0),
+#                   c(-1, -1, 0, -1, -1),
+#                   c(-1, -1, 0, -5, -1),
+#                   c(-5, -5, 0, -1, -5),
+#                   c(-5, -5, 0, -5, -5),
+#                   c(-1, -1, 2, -1, -1),
+#                   c(-1, -1, 2, -5, -1),
+#                   c(-5, -5, 2, -1, -5),
+#                   c(-5, -5, 2, -5, -5),
+#                   c(-1, -1, 4, -1, -1),
+#                   c(-1, -1, 4, -5, -1),
+#                   c(-5, -5, 4, -1, -5),
+#                   c(-5, -5, 4, -5, -5))
+
+x.init.A <- cbind(c(0, 0, 0, 0, 0),
+                  c(-1, -1, 4, -5, -1),
+                  c(-5, -5, 4, -1, -5),
+                  c(-1, -1, 8, -5, -1),
+                  c(-5, -5, 8, -1, -5),
+                  c(-1, -1, 12, -5, -1),
+                  c(-5, -5, 12, -1, -5),
+                  c(-7, -7, 12, -3, -3))
+
+rownames(x.init.A) <- loglikeSTnames(denver.model.A, all=FALSE)
+x.init.A
+
+#' Difference from tutorial: use Josh Keller's version of the function
+source(here::here("Code", "functions_model.R"))
+est.denver.model.A <- estimate.STmodel(denver.model.A, x.init.A)
+print(est.denver.model.A)
+```
+
+### Cross-validation
+
+Define the CV groups
+```{r}
+set.seed(1000)
+site_idsA <- colnames(denver.model.A$D.beta)[which(str_detect(colnames(denver.model.A$D.beta), "d_") == T)]
+
+unique(colnames(bc_obs2))
+Ind.cv.A <- createCV(denver.model.A, groups = 10, min.dist = .1,
+                     subset = site_idsA)
+
+ID.cv.A <- sapply(split(denver.model.A$obs$ID, Ind.cv.A), unique)
+print(sapply(ID.cv.A, length))
+table(Ind.cv.A)
+
+I.col.A <- apply(sapply(ID.cv.A, function(x) denver.model.A$locations$ID%in% x), 1,
+                       function(x) if(sum(x)==1) which(x) else 0)
+names(I.col.A) <- denver.model.A$locations$ID
+print(I.col.A)
+
+par(mfrow=c(1,1))
+plot(denver.model.A$locations$long,
+     denver.model.A$locations$lat,
+     pch=23+floor(I.col.A/max(I.col.A)+.5), bg=I.col.A,
+     xlab="Longitude", ylab="Latitude")
+map("county", "colorado", col="#FFFF0055",fill=TRUE, add=TRUE)
+```
+
+ID starting conditions using previous model without CV:
+```{r}
+x.init.A.cv <- coef(est.denver.model.A, pars="cov")[,c("par","init")]
+x.init.A.cv
+```
+
+Run the model with cross validation
+```{r}
+est.denver.A.cv <- estimateCV(denver.model.A, x.init.A.cv, Ind.cv.A)
+print(est.denver.A.cv)
+
+par(mfrow=c(1,1), mar=c(13.5,2.5,.5,.5), las=2)
+with(coef(est.denver.model.A, pars="all"),
+     plotCI((1:length(par))+.3, par, uiw=1.96*sd,
+             col=2, xlab="", xaxt="n", ylab=""))
+boxplot(est.denver.A.cv, "all", boxwex=.4, col="grey", add=TRUE)
+
+#' Save the results as an .rdata object
+save(denver.data.A, denver.model.A, est.denver.model.A, est.denver.A.cv,
+     file = here::here("Results", "Denver_ST_Model_A.rdata"))
+```
+
+### Prediction using the CV model
+Making predictions using the CV model. Printing out the CV summary statistics as well
+
+```{r}
+pred.A.cv <- predictCV(denver.model.A, est.denver.A.cv, LTA = T)
+pred.A.cv.log <- predictCV(denver.model.A, est.denver.A.cv,
+                           LTA = T, transform="unbiased")
+
+head(pred.A.cv$pred.all$EX)
+tail(pred.A.cv$pred.all$EX)
+
+head(pred.A.cv.log$pred.all$EX)
+tail(pred.A.cv.log$pred.all$EX)
+
+summary(pred.A.cv)
+summary(pred.A.cv.log)
+
+par(mfrow=c(1,2), mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+plot(pred.A.cv, "obs", ID="all", pch=c(19,NA), cex=.25, lty=c(NA,2),
+     col=c("ID", "black", "grey"),
+     ylim=c(-1,2),
+     xlab="Observations", ylab="Predictions",
+     main="Cross-validation BC (log ug/m3)")
+with(pred.A.cv.log$pred.LTA, plotCI(obs, EX.pred, uiw=1.96*sqrt(VX.pred),
+                                    xlab="Observations", ylab="Predictions",
+                                    main="Temporal average BC (ug/m3)"))
+abline(0, 1, col="grey")
+
+jpeg(filename = here::here("Figs", "ST_CV_Obs_vs_Pred_BC_ModA.jpeg"),
+     width = 8, height = 4, units = "in", res = 500)
+par(mfrow=c(1,2), mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+plot(pred.A.cv, "obs", ID="all", pch=c(19,NA), cex=.25, lty=c(NA,2),
+     col=c("ID", "black", "grey"),
+     ylim=c(-1,2),
+     xlab="Observations", ylab="Predictions",
+     main="Cross-validation BC (log ug/m3)")
+with(pred.A.cv.log$pred.LTA, plotCI(obs, EX.pred, uiw=1.96*sqrt(VX.pred),
+                                      xlab="Observations", ylab="Predictions",
+                                      main="Temporal average BC (ug/m3)"))
+abline(0, 1, col="grey")
+dev.off()
+```
+
+### Predictions for 2009-2020
+
+What do the long-term predictions look like for this model?
+Predicting at the distributed (residential + community) sites
+
+```{r}
+x.A <- coef(est.denver.model.A, pars = "cov")$par 
+x.A
+
+E.A <- predict(denver.model.A, est.denver.model.A, LTA = T, 
+               transform="unbiased", pred.var=FALSE)
+print(E.A)
+
+week_preds <- as.data.frame(E.A$EX) %>% 
+  mutate(week = as.Date(rownames(E.A$EX)),
+         year = year(as.Date(rownames(E.A$EX))))
+
+week_sites <- colnames(week_preds)[which(str_detect(colnames(week_preds), "d_"))]
+
+box_preds <- week_preds %>% 
+  select(week, all_of(week_sites)) %>% 
+  #filter(week %in% week_weeks) %>% 
+  mutate(month = month(week),
+         year = year(week)) %>% 
+  filter(year %in% c(2009:2020))
+
+box_data <- box_preds %>% 
+  pivot_longer(-c(week, month, year), names_to = "location", values_to = "pred")
+summary(box_data)
+
+#' Box plot of weekly BC predicted at all distributed sites grouped by month
+box_summary <- box_data %>% 
+  group_by(month) %>% 
+  summarize(median = median(pred, na.rm=T)) %>% 
+  arrange(desc(median))
+box_summary  
+
+pred_box_plot <- ggplot(box_data) +
+  geom_boxplot(aes(x = as.factor(month), y = pred), #, color = as.factor(month)),
+               show.legend = F) +
+  #scale_color_viridis(name = "Month", discrete = T) +
+  facet_wrap(. ~ year, scales = "free") +
+  xlab("") + ylab("Distributed site BC concentration (\u03BCg/m\u00B3): Predicted") +
+  # theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  scale_x_discrete(labels = str_sub(month.name, 1, 1)) 
+pred_box_plot
+```
+
+## Model B: 2 temporal trend (basis) functions
+
+### Create the model object
+For this version of the model, use ```iid``` for ```cov.beta``` (beta, beta1, beta2) and ```exp``` for ```cov.nu``` (error).
+Here we can specify different LUR formluae. The length of the LUR list should be number of basis functions + 1.
+
+```{r}
+denver.data.B <- denver.data2.2
+names(denver.data.B$covars)
+
+LUR.B <- list(covar_fun, covar_fun, covar_fun)
+
+cov.beta.B <-  list(covf = c("iid", "iid", "iid"), nugget = T)
+cov.nu.B <- list(covf = "exp", nugget = T, random.effect = FALSE)
+locations.B <- list(coords = c("x","y"), long.lat = c("lon","lat"), others= "type")
+
+denver.model.B <- createSTmodel(denver.data.B, LUR = LUR.B,
+                                ST = c("bc_st_no2", "bc_st_smk"),
+                                cov.beta = cov.beta.B, cov.nu = cov.nu.B,
+                                locations = locations.B)
+denver.model.B
+```
+
+### Estimate model parameters
+
+- nugget values can range from -1 to -6
+- range values can range from 0 to 4
+- try starting values where the sill and nugget are the same (e.g., both 0) and where they are very different (e.g., 0 and -5)
+- make sure the starting values are pretty different
+
+```{r}
+names <- loglikeSTnames(denver.model.B, all=FALSE)
+names
+
+# x.init.B <- cbind(c(0, 0, 0, 0, 0, 0),
+#                   c(-1, -1, -1, 0, -1, -1),
+#                   c(-1, -1, -1, 0, -5, -1),
+#                   c(-5, -5, -5, 0, -1, -5),
+#                   c(-5, -5, -5, 0, -5, -5),
+#                   c(-1, -1, -1, 2, -1, -1),
+#                   c(-1, -1, -1, 2, -5, -1),
+#                   c(-5, -5, -5, 2, -1, -5),
+#                   c(-5, -5, -5, 2, -5, -5),
+#                   c(-1, -1, -1, 4, -1, -1),
+#                   c(-1, -1, -1, 4, -5, -1),
+#                   c(-5, -5, -5, 4, -1, -5),
+#                   c(-5, -5, -5, 4, -5, -5))
+
+x.init.B <- cbind(c(0, 0, 0, 0, 0, 0),
+                  c(-10, -5, -5, 4, -3, -5),
+                  c(-10, -5, -5, 4, -5, -5),
+                  c(-10, -5, -5, 6, -3, -5),
+                  c(-10, -5, -5, 6, -5, -5),
+                  c(-10, -5, -5, 8, -3, -5),
+                  c(-10, -5, -5, 8, -5, -5),
+                  c(-10, -5, -5, 10, -3, -5),
+                  c(-10, -5, -5, 10, -5, -5),
+                  c(-12, -5, -5, 8, -5, -5),
+                  c(-12, -5, -5, 10, -5, -5),
+                  c(-12, -5, -5, 12, -5, -5))
+
+rownames(x.init.B) <- loglikeSTnames(denver.model.B, all=FALSE)
+x.init.B
+
+#' Difference from tutorial: use Josh Keller's version of the function
+source(here::here("Code", "functions_model.R"))
+est.denver.model.B <- estimate.STmodel(denver.model.B, x.init.B)
+print(est.denver.model.B)
+```
+
+### Cross-validation
+
+Define the CV groups
+```{r}
+set.seed(1000)
+
+site_idsB <- colnames(denver.model.B$D.beta)[which(str_detect(colnames(denver.model.B$D.beta), "d_") == T)]
+site_idsB
+
+Ind.cv.B <- createCV(denver.model.B, groups = 10, #min.dist = .1,
+                     subset = site_idsB)
+
+ID.cv.B <- sapply(split(denver.model.B$obs$ID, Ind.cv.B), unique)
+print(sapply(ID.cv.B, length))
+table(Ind.cv.B)
+
+I.col.B <- apply(sapply(ID.cv.B, function(x) denver.model.B$locations$ID%in% x), 1,
+                 function(x) if(sum(x)==1) which(x) else 0)
+names(I.col.B) <- denver.model.B$locations$ID
+print(I.col.B)
+
+par(mfrow=c(1,1))
+plot(denver.model.B$locations$long,
+     denver.model.B$locations$lat,
+     pch=23+floor(I.col.B/max(I.col.B)+.5), bg=I.col.B,
+     xlab="Longitude", ylab="Latitude")
+map("county", "colorado", col="#FFFF0055",fill=TRUE, add=TRUE)
+```
+
+ID starting conditions using previous model without CV:
+```{r}
+x.init.B.cv <- coef(est.denver.model.B, pars="cov")[,c("par","init")]
+x.init.B.cv
+```
+
+Run the model with cross validation
+```{r}
+est.denver.B.cv <- estimateCV(denver.model.B, x.init.B.cv, Ind.cv.B)
+print(est.denver.B.cv)
+
+par(mfrow=c(1,1), mar=c(13.5,2.5,.5,.5), las=2)
+with(coef(est.denver.model.B, pars="all"),
+     plotCI((1:length(par))+.3, par, uiw=1.96*sd,
+            col=2, xlab="", xaxt="n", ylab=""))
+boxplot(est.denver.B.cv, "all", boxwex=.4, col="grey", add=TRUE)
+
+#' Save the results as an .rdata object
+save(denver.data.B, denver.model.B, est.denver.model.B, est.denver.B.cv,
+     file = here::here("Results", "Denver_ST_Model_B.rdata"))
+```
+
+### Prediction using the CV model
+Making predictions using the CV model. Printing out the CV summary statistics as well
+
+```{r}
+pred.B.cv <- predictCV(denver.model.B, est.denver.B.cv, LTA = T)
+pred.B.cv.log <- predictCV(denver.model.B, est.denver.B.cv,
+                           LTA = T, transform="unbiased")
+
+head(pred.B.cv$pred.all$EX)
+tail(pred.B.cv$pred.all$EX)
+
+head(pred.B.cv.log$pred.all$EX)
+tail(pred.B.cv.log$pred.all$EX)
+
+summary(pred.B.cv)
+summary(pred.B.cv.log)
+
+par(mfrow=c(1,2), mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+plot(pred.B.cv, "obs", ID="all", pch=c(19,NA), cex=.25, lty=c(NA,2),
+     col=c("ID", "black", "grey"),
+     ylim=c(-1,2),
+     xlab="Observations", ylab="Predictions",
+     main="Cross-validation BC (log ug/m3)")
+with(pred.B.cv.log$pred.LTA, plotCI(obs, EX.pred, uiw=1.96*sqrt(VX.pred),
+                                    xlab="Observations", ylab="Predictions",
+                                    main="Temporal average BC (ug/m3)"))
+abline(0, 1, col="grey")
+
+jpeg(filename = here::here("Figs", "ST_CV_Obs_vs_Pred_BC_ModB.jpeg"),
+     width = 8, height = 4, units = "in", res = 500)
+par(mfrow=c(1,2), mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+plot(pred.B.cv, "obs", ID="all", pch=c(19,NA), cex=.25, lty=c(NA,2),
+     col=c("ID", "black", "grey"),
+     ylim=c(-1,2),
+     xlab="Observations", ylab="Predictions",
+     main="Cross-validation BC (log ug/m3)")
+with(pred.B.cv.log$pred.LTA, plotCI(obs, EX.pred, uiw=1.96*sqrt(VX.pred),
+                                      xlab="Observations", ylab="Predictions",
+                                      main="Temporal average BC (ug/m3)"))
+abline(0, 1, col="grey")
+dev.off()
+```
+
+### Predictions for 2009-2020
+
+What do the long-term predictions look like for this model?
+Predicting at the distributed (residential + community) sites
+
+```{r}
+x.B <- coef(est.denver.model.B, pars = "cov")$par 
+x.B
+
+E.B <- predict(denver.model.B, est.denver.model.B, LTA = T, 
+               transform="unbiased", pred.var=FALSE)
+print(E.B)
+
+week_preds <- as.data.frame(E.B$EX) %>% 
+  mutate(week = as.Date(rownames(E.B$EX)),
+         year = year(as.Date(rownames(E.B$EX))))
+
+week_sites <- colnames(week_preds)[which(str_detect(colnames(week_preds), "d_"))]
+
+box_preds <- week_preds %>% 
+  select(week, all_of(week_sites)) %>% 
+  #filter(week %in% week_weeks) %>% 
+  mutate(month = month(week),
+         year = year(week)) %>%
+  filter(year %in% c(2009:2020))
+
+box_data <- box_preds %>% 
+  pivot_longer(-c(week, month, year), names_to = "location", values_to = "pred")
+summary(box_data)
+
+#' Box plot of weekly BC predicted at all distributed sites grouped by month
+box_summary <- box_data %>% 
+  group_by(month) %>% 
+  summarize(median = median(pred, na.rm=T)) %>% 
+  arrange(desc(median))
+box_summary  
+
+pred_box_plot <- ggplot(box_data) +
+  geom_boxplot(aes(x = as.factor(month), y = pred), #, color = as.factor(month)),
+               show.legend = F) +
+  #scale_color_viridis(name = "Month", discrete = T) +
+  facet_wrap(. ~ year, scales = "free") +
+  xlab("") + ylab("Distributed site BC concentration (\u03BCg/m\u00B3): Predicted") +
+  # theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  scale_x_discrete(labels = str_sub(month.name, 1, 1)) 
+pred_box_plot
+```
+
+
+# Summary Table
+
+```{r, include = F, echo = F}
+sum_tab <- data.frame(model = c("Model A", "Model B"),
+                      trend_data = rep("BC + NO2 + PM2.5", 2),
+                      cov_beta0 = c("iid", "iid"),
+                      cov_beta1 = c("iid", "iid"),
+                      cov_beta2 = c("NA", "iid"),
+                      cov_nu_error = c("exp", "exp"),
+                      no_basis_fns = c(1, 2),
+                      df_per_year = rep(4, 2),
+                      all_converge = c(ifelse(exists("est.denver.A.cv"),all(est.denver.A.cv$status$convergence), NA),
+                                       ifelse(exists("est.denver.B.cv"),all(est.denver.B.cv$status$convergence), NA)),
+                      cv_rmse_obs = c(ifelse(exists("pred.A.cv.log"), round(summary(pred.A.cv.log)$RMSE[1,3], 2), NA),
+                                      ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$RMSE[1,3], 2), NA)),
+                      cv_rmse_avg = c(ifelse(exists("pred.A.cv.log"), round(summary(pred.A.cv.log)$RMSE[2,3], 2), NA),
+                                      ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$RMSE[2,3], 2), NA)),
+                      cv_r2_obs = c(ifelse(exists("pred.A.cv.log"), round(summary(pred.A.cv.log)$R2[1,3], 2), NA),
+                                    ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$R2[1,3], 2), NA)),
+                      cv_r2_avg = c(ifelse(exists("pred.A.cv.log"), round(summary(pred.A.cv.log)$R2[2,3], 2), NA),
+                                    ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$R2[2,3], 2), NA)),
+                      cv_coverage_obs = c(ifelse(exists("pred.A.cv.log"), round(summary(pred.A.cv.log)$coverage[1,1], 2), NA),
+                                          ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$coverage[1,1], 2), NA)),
+                      cv_coverage_avg = c(ifelse(exists("pred.A.cv.log"), round(summary(pred.A.cv.log)$coverage[2,1], 2), NA),
+                                          ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$coverage[2,1], 2), NA)))
+```
+
+```{r, echo = F, results = "asis"}
+library(knitr)
+kable(sum_tab, caption = "Summary of model diagnostics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+
+<!-- # Additional Notes -->
+
+<!-- ## All of Josh Keller's advice for fitting the intital models -->
+<!-- Pasting here for safe keeping -->
+
+<!-- Your sleuthing about that error is correct. A singular hessian matrix (the -->
+<!-- hessian is a like a matrix analogue of a second derivative) is symptomatic of -->
+<!-- the optimization algorithm not finding the true minimum.  I remember this error -->
+<!-- all too well! To deal with this, I suggest the following: -->
+
+<!-- - Use the version of estimate.STmodel() in the attached file instead of -->
+<!-- the one that is in the package. If you load the package, then source this file, it will overwrite the package function so you can use this version. This version has two changes: -->
+
+<!--     - It changes the error handling to catch the non-invertible warning -->
+<!--     and output an obviously wrong value for the standard deviation (-1000). This doesn’t fix the problem at all, but keeps the function from aborting, as the package version does, since the abort makes you lose all of your results that far. This makes it more practical to use multiple starting values in a single function call, since it won’t abort half way through. -->
+<!--     - It uses the function hessian() from the `numDeriv` package to provide a more numerically-accurate estimate of the Hessian matrix. The package version of the hessian is still stored in the `optim_hessian` object, while the new version is in the `hessian` object.  This means you’ll need to install the numDeriv package. -->
+
+<!-- - Try a set of different initial conditions. The numerical algorithm used -->
+<!-- to maximize the likelihood can get stuck in some areas, so using a set of several initial conditions is a good way to try to ensure that you’re getting the best solution. The package should be able to loop through several initial values and pick the one giving the best result. Let me know if you’d like any suggested values to try. -->
+
+<!-- - Try a simpler model. I’m not sure exactly what model structure you’re using, but it often helps to start with a smaller model (e.g. 1 time trend, and iid covariance structure) to get a sense of the ranges of the parameters. You can then use the estimates from the simpler model as approximate starting values for a more complicated fit. -->
+

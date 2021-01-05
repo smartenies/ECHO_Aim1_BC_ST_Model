@@ -159,6 +159,7 @@ Basically, I'm going to start with the following:
 **Update 11.24.20**: After peer-review at ES&T, we are making the following adjustments to the model:
 
 - We need to reexamine the Campaign 4 data to see if there are additional criteria we can use to identify "useable" data
+    - Note: the plan is to drop any site within a campaign that has a CV > 0.30. This cutoff results in us dropping 17 sites from Campaign 4
 - We need to add the "Campaign 5" data from winter/spring 2020
 - We need to make sure that the model results are clearly communicated
 

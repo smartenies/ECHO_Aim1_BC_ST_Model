@@ -27,7 +27,7 @@ ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
 today <- Sys.Date()
 
 #' -----------------------------------------------------------------------------
-#' Read in each of the datasets and create one big data frame
+#' Read in each of the data sets and create one big data frame
 #' -----------------------------------------------------------------------------
 
 #' Filter TWA data
@@ -53,7 +53,8 @@ filter_pm <- left_join(filter_pm, filter_pm2, by =c("campaign", "filter_id"))
 #' Calibrated BC data
 filter_bc_file_name <- paste0("Filter_BC_Calibrated.csv")
 filter_bc <- read_csv(here::here("Data", filter_bc_file_name)) %>%
-  select(filter_id, campaign, bc_ug_m3_raw, bc_ug_m3_lm, bc_ug_m3_dem)
+  select(filter_id, campaign, bc_blank_mean:negative_bc_orig_mass,
+         bc_ug_m3_raw, bc_ug_m3_lm, bc_ug_m3_dem)
 sum(duplicated(filter_bc$filter_id))
 
 #' Metals (currently uncalibrated)
@@ -64,7 +65,18 @@ sum(duplicated(filter_met$filter_id))
 
 #' Combined
 filter_data <- full_join(filter_pm, filter_bc, by = c("filter_id", "campaign")) %>%
-  full_join(filter_met, by = c("filter_id", "campaign"))
+  full_join(filter_met, by = c("filter_id", "campaign")) %>%
+  mutate(sample_week = as.Date(cut(as.Date(StartDateTimeLocal), "week"))) %>%
+  mutate(st_week = sample_week) %>%
+  select(site_id, filter_id, campaign, is_blank, indoor, participant, 
+         StartDateTimeLocal, EndDateTimeLocal, sample_week, st_week,
+         logged_runtime, logged_rt_volume_L, low_volume_flag, ultralow_volume_flag,
+         pm_below_lod, pm_below_loq, bc_below_lod, 
+         negative_pm_mass, potential_contamination,
+         pm_mass_ug, bc_mass_ug_corrected, blank_corrected_bc, bc_blank_mean,
+         pm_ug_m3_raw:pm_ug_m3_dem, bc_ug_m3_raw:bc_ug_m3_dem,
+         Al_ug_m3:Zn_ug_m3) 
+names(filter_data)
 sum(duplicated(filter_data$filter_id))
 table(filter_data[which(duplicated(filter_data$filter_id) ==T), "is_blank"])
 # View(filter(filter_data, duplicated(filter_data$filter_id)))
@@ -72,41 +84,49 @@ table(filter_data[which(duplicated(filter_data$filter_id) ==T), "is_blank"])
 #' Spatial covariates
 sp_covariates_file_name <- "Spatial_Covariates_Filters_AEA.csv"
 sp_covariates <- read_csv(here::here("Data", sp_covariates_file_name)) %>% 
-  select(-WKT)
-# sp_covariates[which(sp_covariates$filter_id == "080310027"), "campaign"] <- "CampaignX"
+  select(-c(WKT, campaign, filter_id)) %>%
+  distinct()
 
 #' Spatiotemporal covariates
 st_covariates_file_name <- "ST_Covariates_Sites_AEA.csv"
-st_covariates <- read_csv(here::here("Data", st_covariates_file_name)) %>% 
+st_covariates <- read_csv(here::here("Data", st_covariates_file_name)) %>%
   rename(st_week = week)
 
 #' Put it all together
-all_data <- full_join(filter_data, sp_covariates, by = c("filter_id", "campaign", "site_id")) %>% 
-  mutate(sample_week = as.Date(cut(as.Date(StartDateTimeLocal), "week"))) %>%
-  full_join(st_covariates, by = c("site_id")) %>%
+all_data1 <- left_join(st_covariates, filter_data, by = c("site_id", "st_week")) %>%
+  left_join(sp_covariates, by = "site_id") %>%
   select(-c(nn3_bc:idw_bc))
-test <- filter(all_data, filter_id == "080310027")
-class(all_data)
-names(all_data)
+class(all_data1)
+names(all_data1)
 
-#' Set central monitor bc_ug_m3 to nn_bc
-#' Set indoor == 0
-#' set lon/lat
-all_data <- all_data %>% 
-  mutate(bc_ug_m3_raw = ifelse(filter_id == "080310027", nn_bc, bc_ug_m3_raw),
-         bc_ug_m3_dem = ifelse(filter_id == "080310027", nn_bc, bc_ug_m3_dem),
-         bc_ug_m3_lm = ifelse(filter_id == "080310027", nn_bc, bc_ug_m3_lm),
-         #sample_week = ifelse(filter_id == "080310027", as.Date(st_week, "%Y-%m-%d"), sample_week))
-         sample_week = ifelse(filter_id == "080310027", st_week, sample_week)) %>%
-  mutate(sample_week = as.Date(sample_week, origin = "1970-01-01"))
-test2 <- filter(all_data, filter_id == "080310027")
-tail(test2[,c("bc_ug_m3_dem", "nn_bc", "sample_week", "st_week")])
+all_data2 <- all_data1 %>% 
+  select(site_id, filter_id, campaign, lon, lat, is_blank:Zn_ug_m3, 
+         elevation_50:aadt_2500, st_week:units_smoke)
+ncol(all_data2) == ncol(all_data1)
+names(all_data2)
 
-test3 <- select(all_data, sample_week, st_week, StartDateTimeLocal)
-View(test3)
+#' Data frame for the central site
+cent_data <- filter(st_covariates, site_id == "16") %>%
+  left_join(filter(sp_covariates, site_id == "16"), by = "site_id") 
+cent_data$sample_week <- cent_data$st_week
+cent_data$filter_id <- "080310027"
+cent_data$campaign <- "CampaignX"
+cent_data$is_blank <- 0
+cent_data$indoor <- 0
+cent_data$participant <- 0
+cent_data$bc_ug_m3_raw <- cent_data$nn_bc
+cent_data$bc_ug_m3_lm <- cent_data$nn_bc
+cent_data$bc_ug_m3_dem <- cent_data$nn_bc
 
-test4 <- filter(filter(all_data, !is.na(bc_ug_m3_dem)), st_week == sample_week)
-View(test4)
+#' Combine all the data
+all_data <- bind_rows(all_data2, cent_data)
+
+test1 <- filter(all_data, filter_id == "080310027")
+test2 <- filter(all_data, campaign == "Campaign5")
+test3 <- filter(all_data, site_id == "20")
+test4 <- filter(all_data, filter_id != "080310027") %>%
+  filter(!is.na(bc_ug_m3_dem)) %>%
+  filter(st_week == sample_week)
 
 #' Write out data
 #' Two .csv files: with and without date  
