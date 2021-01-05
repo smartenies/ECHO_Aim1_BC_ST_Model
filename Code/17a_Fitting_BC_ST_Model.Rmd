@@ -12,6 +12,8 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warnings = F)
+defaultW <- getOption("warn") 
+options(warn = -1) 
 ```
 
 # Introduction
@@ -74,6 +76,7 @@ simple_theme <- theme(
 )
 
 options(scipen = 9999) #avoid scientific notation
+options(dplyr.summarise.inform = F)
 
 albers <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
 ll_nad83 <- "+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0"
@@ -243,7 +246,7 @@ tail(smk_weeks)
 setdiff(bc_weeks, smk_weeks)
 ```
 
-Create a new ```denver.data``` object. 
+Create a new ```denver.data``` object.
 
 ```{r}
 denver.data <- createSTdata(obs = bc_obs2,
@@ -265,11 +268,11 @@ First up: NO2
 counties <- c("001", "005", "013", "014", "031", "059")
 
 #' NO2 concentrations
-no2_data <- read_csv(here::here("Data", "Monitor_NO2_Data_AEA.csv")) %>% 
-  filter(!is.na(Arithmetic_Mean)) %>% 
-  st_as_sf(wkt = "WKT", crs = albers) %>% 
+no2_data <- read_csv(here::here("Data", "Monitor_NO2_Data_AEA.csv")) %>%
+  filter(!is.na(Arithmetic_Mean)) %>%
+  st_as_sf(wkt = "WKT", crs = albers) %>%
   mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
-  filter(County_Code %in% counties) %>% 
+  filter(County_Code %in% counties) %>%
   arrange(Date_Local, monitor_id) %>%
   mutate(Arithmetic_Mean = ifelse(Arithmetic_Mean <= 0, NA, Arithmetic_Mean))
 head(no2_data$Date_Local)
@@ -316,13 +319,13 @@ Organize the observations and spatial data. **Use the log-transformed NO2 here**
 ```{r}
 
 #' NO2 observations
-no2_obs <- no2_data %>% 
+no2_obs <- no2_data %>%
   st_set_geometry(NULL) %>%
   dplyr::select(monitor_id, Date_Local, Arithmetic_Mean) %>%
   mutate(st_week = as.character(as.Date(cut(as.Date(Date_Local), "week")))) %>%
-  filter(st_week %in% bc_weeks) %>% 
+  filter(st_week %in% bc_weeks) %>%
   group_by(monitor_id, st_week) %>%
-  mutate(log_mean = log(Arithmetic_Mean)) %>% 
+  mutate(log_mean = log(Arithmetic_Mean)) %>%
   summarize(no2 = mean(log_mean, na.rm=T)) %>%
   pivot_wider(id_cols = st_week,
               names_from = monitor_id, values_from = no2) %>%
@@ -334,13 +337,13 @@ tail(no2_obs$st_week)
 
 # NO2 SP object
 no2_data2 <- read_csv(here::here("Data", "Monitor_NO2_Data_AEA.csv")) %>%
-  mutate(year = year(Date_Local)) %>% 
-  dplyr::select(-year) %>% 
-  st_as_sf(wkt = "WKT", crs = albers) %>% 
-  mutate(monitor_id = paste0(monitor_id, "_no2")) %>% 
+  mutate(year = year(Date_Local)) %>%
+  dplyr::select(-year) %>%
+  st_as_sf(wkt = "WKT", crs = albers) %>%
+  mutate(monitor_id = paste0(monitor_id, "_no2")) %>%
   filter(monitor_id %in% colnames(no2_obs))
 
-no2_coords <- do.call(rbind, st_geometry(no2_data2)) %>% as_tibble() 
+no2_coords <- do.call(rbind, st_geometry(no2_data2)) %>% as_tibble()
 names(no2_coords) <- c("x", "y")
 no2_sp_lonlat <- no2_data2 %>%
   st_transform(crs = ll_wgs84)
@@ -358,11 +361,11 @@ no2_sp_cov <- bind_cols(no2_sp_cov, no2_coords, no2_coords2) %>%
 Next, BC at the central site monitor
 ```{r}
 #' BC central site concentrations
-bc_cent_data <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv")) %>% 
-  filter(!is.na(Arithmetic_Mean)) %>% 
-  st_as_sf(wkt = "WKT", crs = albers) %>% 
+bc_cent_data <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv")) %>%
+  filter(!is.na(Arithmetic_Mean)) %>%
+  st_as_sf(wkt = "WKT", crs = albers) %>%
   mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
-  filter(County_Code %in% counties) %>% 
+  filter(County_Code %in% counties) %>%
   arrange(Date_Local, monitor_id) %>%
   mutate(Arithmetic_Mean = ifelse(Arithmetic_Mean <= 0.005, NA, Arithmetic_Mean))
 head(bc_cent_data$Date_Local)
@@ -375,7 +378,7 @@ unique(bc_cent_data$monitor_id)
 
 Plot the time trends for BC at the central site monitor
 
-**Original units (ug/m3)** 
+**Original units (ug/m3)**
 ```{r}
 bc_ts <- ggplot(data = bc_cent_data, aes(x = Date_Local, y = Arithmetic_Mean)) +
   geom_point(aes(color = as.factor(monitor_id)), shape = 20, size = 1) +
@@ -388,7 +391,7 @@ bc_ts <- ggplot(data = bc_cent_data, aes(x = Date_Local, y = Arithmetic_Mean)) +
 bc_ts
 ```
 
-**Log-transformed BC** 
+**Log-transformed BC**
 ```{r}
 bc_ts2 <- ggplot(data = bc_cent_data, aes(x = Date_Local, y = log(Arithmetic_Mean))) +
   geom_point(aes(color = as.factor(monitor_id)), shape = 20, size = 1) +
@@ -406,13 +409,13 @@ Organize the observations and spatial data
 **Use log-transformed data here**
 ```{r}
 #' BC observations
-bc_cent_obs <- bc_cent_data %>% 
+bc_cent_obs <- bc_cent_data %>%
   st_set_geometry(NULL) %>%
   dplyr::select(monitor_id, Date_Local, Arithmetic_Mean) %>%
   mutate(st_week = as.character(as.Date(cut(as.Date(Date_Local), "week")))) %>%
-  filter(st_week %in% bc_weeks) %>% 
+  filter(st_week %in% bc_weeks) %>%
   group_by(monitor_id, st_week) %>%
-  mutate(log_mean = log(Arithmetic_Mean)) %>% 
+  mutate(log_mean = log(Arithmetic_Mean)) %>%
   summarize(bc = mean(log_mean, na.rm=T)) %>%
   pivot_wider(id_cols = st_week,
               names_from = monitor_id, values_from = bc) %>%
@@ -424,13 +427,13 @@ tail(bc_cent_obs$st_week)
 
 # BC Central Site SP object
 bc_cent_data2 <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv")) %>%
-  mutate(year = year(Date_Local)) %>% 
-  dplyr::select(-year) %>% 
-  st_as_sf(wkt = "WKT", crs = albers) %>% 
-  mutate(monitor_id = paste0(monitor_id, "_bc")) %>% 
+  mutate(year = year(Date_Local)) %>%
+  dplyr::select(-year) %>%
+  st_as_sf(wkt = "WKT", crs = albers) %>%
+  mutate(monitor_id = paste0(monitor_id, "_bc")) %>%
   filter(monitor_id %in% colnames(bc_cent_obs))
 
-bc_cent_coords <- do.call(rbind, st_geometry(bc_cent_data2)) %>% as_tibble() 
+bc_cent_coords <- do.call(rbind, st_geometry(bc_cent_data2)) %>% as_tibble()
 names(bc_cent_coords) <- c("x", "y")
 bc_cent_sp_lonlat <- bc_cent_data2 %>%
   st_transform(crs = ll_wgs84)
@@ -449,12 +452,12 @@ Lastly, PM2.5 from select monitors with long-term records
 
 ```{r, include = F}
 #' PM2.5 concentrations
-pm_data <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv")) %>% 
-  filter(!is.na(Arithmetic_Mean)) %>% 
-  st_as_sf(wkt = "WKT", crs = albers) %>% 
+pm_data <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv")) %>%
+  filter(!is.na(Arithmetic_Mean)) %>%
+  st_as_sf(wkt = "WKT", crs = albers) %>%
   mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
-  filter(County_Code %in% counties) %>% 
-  filter(Sample_Duration != "1 HOUR") %>% 
+  filter(County_Code %in% counties) %>%
+  filter(Sample_Duration != "1 HOUR") %>%
   arrange(Date_Local, monitor_id)
 head(pm_data$Date_Local)
 tail(pm_data$Date_Local)
@@ -502,13 +505,13 @@ Organize the observations and spatial data
 ```{r}
 
 #' PM2.5 observations
-pm_obs <- pm_data %>% 
+pm_obs <- pm_data %>%
   st_set_geometry(NULL) %>%
   dplyr::select(monitor_id, Date_Local, Arithmetic_Mean) %>%
   mutate(st_week = as.character(as.Date(cut(as.Date(Date_Local), "week")))) %>%
-  filter(st_week %in% bc_weeks) %>% 
+  filter(st_week %in% bc_weeks) %>%
   group_by(monitor_id, st_week) %>%
-  mutate(log_mean = log(Arithmetic_Mean)) %>% 
+  mutate(log_mean = log(Arithmetic_Mean)) %>%
   summarize(pm = mean(log_mean, na.rm=T)) %>%
   pivot_wider(id_cols = st_week,
               names_from = monitor_id, values_from = pm) %>%
@@ -520,13 +523,13 @@ tail(pm_obs$st_week)
 
 # PM SP object
 pm_data2 <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv")) %>%
-  mutate(year = year(Date_Local)) %>% 
-  dplyr::select(-year) %>% 
-  st_as_sf(wkt = "WKT", crs = albers) %>% 
-  mutate(monitor_id = paste0(monitor_id, "_pm")) %>% 
+  mutate(year = year(Date_Local)) %>%
+  dplyr::select(-year) %>%
+  st_as_sf(wkt = "WKT", crs = albers) %>%
+  mutate(monitor_id = paste0(monitor_id, "_pm")) %>%
   filter(monitor_id %in% colnames(pm_obs))
 
-pm_coords <- do.call(rbind, st_geometry(pm_data2)) %>% as_tibble() 
+pm_coords <- do.call(rbind, st_geometry(pm_data2)) %>% as_tibble()
 names(pm_coords) <- c("x", "y")
 pm_sp_lonlat <- pm_data2 %>%
   st_transform(crs = ll_wgs84)
@@ -545,7 +548,7 @@ Combine the observations and the spatial covariates
 Scale the pollutant measurements
 ```{r}
 #' Join log-transformed observations
-pol_obs <- left_join(no2_obs, bc_cent_obs, by = "st_week") %>% 
+pol_obs <- left_join(no2_obs, bc_cent_obs, by = "st_week") %>%
   left_join(pm_obs, by = "st_week")
 glimpse(pol_obs)
 
@@ -582,7 +585,7 @@ pol_STdata <- createSTdata(obs = pol_obs,
 print(pol_STdata)
 ```
 
-## Generate the temporal trend 
+## Generate the temporal trend
 
 The cross validation results for generating the time trends suggest 2 basis functions is the way to go, but let's see if that holds up with our data
 
@@ -610,7 +613,7 @@ plot(pol.SVD.cv.8py)
 I tried using 1 and 2 basis functions for the time trends. I also checked out 4 and 8 df per year
 
 ### 1 basis function
-First, see what the time trends for the monitoring data look like with 1 basis function. 
+First, see what the time trends for the monitoring data look like with 1 basis function.
 
 **4 df per year**
 ```{r}
@@ -677,7 +680,7 @@ Using two basis functions helped somewhat to reduce this autocorrelation, but it
 
 ### 1 basis function, 4 df per year
 
-First update the trend data, then plot the trends for three distributed sites and the central BC monitoring site. 
+First update the trend data, then plot the trends for three distributed sites and the central BC monitoring site.
 
 ```{r}
 denver.data2.1 <- denver.data
@@ -1048,36 +1051,36 @@ What do the long-term predictions look like for this model?
 Predicting at the distributed (residential + community) sites
 
 ```{r}
-x.A <- coef(est.denver.model.A, pars = "cov")$par 
+x.A <- coef(est.denver.model.A, pars = "cov")$par
 x.A
 
-E.A <- predict(denver.model.A, est.denver.model.A, LTA = T, 
+E.A <- predict(denver.model.A, est.denver.model.A, LTA = T,
                transform="unbiased", pred.var=FALSE)
 print(E.A)
 
-week_preds <- as.data.frame(E.A$EX) %>% 
+week_preds <- as.data.frame(E.A$EX) %>%
   mutate(week = as.Date(rownames(E.A$EX)),
          year = year(as.Date(rownames(E.A$EX))))
 
 week_sites <- colnames(week_preds)[which(str_detect(colnames(week_preds), "d_"))]
 
-box_preds <- week_preds %>% 
-  select(week, all_of(week_sites)) %>% 
-  #filter(week %in% week_weeks) %>% 
+box_preds <- week_preds %>%
+  select(week, all_of(week_sites)) %>%
+  #filter(week %in% week_weeks) %>%
   mutate(month = month(week),
-         year = year(week)) %>% 
+         year = year(week)) %>%
   filter(year %in% c(2009:2020))
 
-box_data <- box_preds %>% 
+box_data <- box_preds %>%
   pivot_longer(-c(week, month, year), names_to = "location", values_to = "pred")
 summary(box_data)
 
 #' Box plot of weekly BC predicted at all distributed sites grouped by month
-box_summary <- box_data %>% 
-  group_by(month) %>% 
-  summarize(median = median(pred, na.rm=T)) %>% 
+box_summary <- box_data %>%
+  group_by(month) %>%
+  summarize(median = median(pred, na.rm=T)) %>%
   arrange(desc(median))
-box_summary  
+box_summary
 
 pred_box_plot <- ggplot(box_data) +
   geom_boxplot(aes(x = as.factor(month), y = pred), #, color = as.factor(month)),
@@ -1086,7 +1089,7 @@ pred_box_plot <- ggplot(box_data) +
   facet_wrap(. ~ year, scales = "free") +
   xlab("") + ylab("Distributed site BC concentration (\u03BCg/m\u00B3): Predicted") +
   # theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
-  scale_x_discrete(labels = str_sub(month.name, 1, 1)) 
+  scale_x_discrete(labels = str_sub(month.name, 1, 1))
 pred_box_plot
 ```
 
@@ -1260,36 +1263,36 @@ What do the long-term predictions look like for this model?
 Predicting at the distributed (residential + community) sites
 
 ```{r}
-x.B <- coef(est.denver.model.B, pars = "cov")$par 
+x.B <- coef(est.denver.model.B, pars = "cov")$par
 x.B
 
-E.B <- predict(denver.model.B, est.denver.model.B, LTA = T, 
+E.B <- predict(denver.model.B, est.denver.model.B, LTA = T,
                transform="unbiased", pred.var=FALSE)
 print(E.B)
 
-week_preds <- as.data.frame(E.B$EX) %>% 
+week_preds <- as.data.frame(E.B$EX) %>%
   mutate(week = as.Date(rownames(E.B$EX)),
          year = year(as.Date(rownames(E.B$EX))))
 
 week_sites <- colnames(week_preds)[which(str_detect(colnames(week_preds), "d_"))]
 
-box_preds <- week_preds %>% 
-  select(week, all_of(week_sites)) %>% 
-  #filter(week %in% week_weeks) %>% 
+box_preds <- week_preds %>%
+  select(week, all_of(week_sites)) %>%
+  #filter(week %in% week_weeks) %>%
   mutate(month = month(week),
          year = year(week)) %>%
   filter(year %in% c(2009:2020))
 
-box_data <- box_preds %>% 
+box_data <- box_preds %>%
   pivot_longer(-c(week, month, year), names_to = "location", values_to = "pred")
 summary(box_data)
 
 #' Box plot of weekly BC predicted at all distributed sites grouped by month
-box_summary <- box_data %>% 
-  group_by(month) %>% 
-  summarize(median = median(pred, na.rm=T)) %>% 
+box_summary <- box_data %>%
+  group_by(month) %>%
+  summarize(median = median(pred, na.rm=T)) %>%
   arrange(desc(median))
-box_summary  
+box_summary
 
 pred_box_plot <- ggplot(box_data) +
   geom_boxplot(aes(x = as.factor(month), y = pred), #, color = as.factor(month)),
@@ -1298,7 +1301,7 @@ pred_box_plot <- ggplot(box_data) +
   facet_wrap(. ~ year, scales = "free") +
   xlab("") + ylab("Distributed site BC concentration (\u03BCg/m\u00B3): Predicted") +
   # theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
-  scale_x_discrete(labels = str_sub(month.name, 1, 1)) 
+  scale_x_discrete(labels = str_sub(month.name, 1, 1))
 pred_box_plot
 ```
 
@@ -1334,6 +1337,7 @@ sum_tab <- data.frame(model = c("Model A", "Model B"),
 library(knitr)
 kable(sum_tab, caption = "Summary of model diagnostics") %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+options(warn = defaultW)
 ```
 
 
