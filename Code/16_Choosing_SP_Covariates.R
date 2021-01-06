@@ -229,13 +229,13 @@ bc_cor_flat
 
 bc_cor_flat_check <- filter(bc_cor_flat, abs(cor) > 0.95)
 bc_cor_drop <- unique(bc_cor_flat_check$row)
-bc_cor_drop
+bc_cor_drop <- bc_cor_drop[c(1:9,14,16:20)]
 
 drop_vars2 <- c(drop_vars2, bc_cor_drop)
 drop_vars2
 
 #' Now how many predictors do we have?
-#' 69 candidate predictors
+#' 76 candidate predictors
 bc_lur_data2 <- bc_lur_data %>%
   select(-c(drop_vars2))
 names(bc_lur_data2)

@@ -60,7 +60,7 @@ simple_theme2 <- theme(
 
 map_theme <- theme(
   #aspect.ratio = 1,
-  text  = element_text(family="Arial",size = 14, color = 'black'),
+  text  = element_text(size = 14, color = 'black'),
   panel.spacing.y = unit(0,"cm"),
   panel.spacing.x = unit(0.25, "lines"),
   panel.grid.minor = element_line(color = "transparent"),
@@ -89,7 +89,6 @@ map_theme2 <- theme(
   plot.margin=grid::unit(c(0,0,0,0), "mm"),
   legend.key = element_blank()
 )
-windowsFonts(Arial=windowsFont("TT Arial"))
 
 options(scipen = 9999) #avoid scientific notation
 
@@ -105,91 +104,11 @@ library(colormap)
 scales::show_col(colormap(), labels = T)
 
 c1_color <- "#440154FF"
-c2_color <- "#2C718EFF"
-c3_color <- "#61C960FF"
+c2_color <- "#3F518BFF"
+c3_color <- "#21918DFF"
+c4_color <- "#61C960FF"
+c5_color <- "#D6E22BFF"
 cent_color <- "#FDE725FF"
-
-#' -----------------------------------------------------------------------------
-#' Figures for A&WMA Extended Abstract
-#' -----------------------------------------------------------------------------
-#' 
-#' data_name <- "Combined_Filter_Data_AEA.csv"
-#' lur_data_sf <- read_csv(here::here("Data", data_name)) %>%
-#'   filter(!is.na(lon)) %>% 
-#'   mutate(lon2 = lon, lat2 = lat) %>% 
-#'   st_as_sf(coords = c('lon2', 'lat2'), crs = ll_wgs84) %>%
-#'   st_transform(crs = albers) %>%
-#'   filter(indoor == 0) %>%
-#'   filter(bc_ug_m3_dem > 0) %>%
-#'   rename("pm_ug_m3_raw" = "pm_ug_m3") %>%
-#'   rename("pm_ug_m3" = "pm_ug_m3_dem") %>%
-#'   rename("bc_ug_m3_raw" = "bc_ug_m3") %>%
-#'   rename("bc_ug_m3" = "bc_ug_m3_dem") %>% 
-#'   filter(campaign %in% paste0("Campaign", c(1, 2, 3, "X")))
-#' 
-#' lur_data_sf <- lur_data_sf %>% 
-#'   mutate(sample_week_no = format(StartDateLocal, "%Y-%W")) #%>% 
-#'   #mutate(sample_week = as.Date(cut(as.Date(StartDateLocal), "week")))
-#' 
-#' #' Add a unique site ID
-#' lur_data_sf <- mutate(lur_data_sf, site_id_lonlat = paste(lon, lat, sep = "_"))
-#' 
-#' ids <- select(lur_data_sf, site_id_lonlat) %>% 
-#'   distinct(site_id_lonlat) %>% 
-#'   mutate(site_id = paste("d", seq_along(site_id_lonlat), sep = "_"))
-#' 
-#' lur_data_sf <- st_join(lur_data_sf, ids, by = "site_id_lonlat") %>% 
-#'   mutate(site_id = ifelse(filter_id == "080310027", "central", site_id))
-#' 
-#' loc_means <- lur_data_sf %>% 
-#'   select(site_id, bc_ug_m3) %>% 
-#'   group_by(site_id) %>% 
-#'   summarize(bc_ug_m3 = mean(bc_ug_m3, na.rm = T),
-#'             count = n()) %>% 
-#'   st_transform(crs = ll_wgs84) %>% 
-#'   filter(site_id != "central")
-#' 
-#' highways <- read_csv(here::here("Data", "Highways_AEA.csv")) %>%
-#'   st_as_sf(wkt = "WKT", crs = albers) %>% 
-#'   st_transform(crs = ll_wgs84)
-#' 
-#' loc_mean_plot <- ggplot() +
-#'   geom_sf(data = loc_means, aes(color = bc_ug_m3, size = count), 
-#'           show.legend = "point") +
-#'   geom_sf(data = highways, color = "red", show.legend = "line") +
-#'   scale_color_viridis(name = "BC (ug/m3)") +
-#'   scale_size_continuous(name = "No. of samples\ncollected") +
-#'   north(x.min = -105.3726, x.max = -104.4937,
-#'         y.min =  39.5, y.max = 40.14455,
-#'         symbol = 12, location = "bottomright", scale = 0.05) +
-#'   ggsn::scalebar(x.min = -105.3726, x.max = -104.4937,
-#'                  y.min =  39.45, y.max = 40.14455, transform = T, dist_unit = "km",
-#'                  dist = 10, model="WGS84", st.bottom = F, st.size = 3,
-#'                  height = 0.01) +
-#'   xlab("") + ylab("") +
-#'   simple_theme +
-#'   theme(plot.margin=grid::unit(c(0,0,0,0), "mm")) +
-#'   theme(axis.ticks = element_blank(),
-#'         axis.text = element_blank())
-#' loc_mean_plot
-#' ggsave(filename = here::here("Figs", "AWMA_Fig1A.jpeg"), 
-#'        height = 5, width = 6, units = "in", device = "jpeg", dpi = 400)
-#' 
-#' box_data <- lur_data_sf %>% 
-#'   select(site_id, campaign, week, bc_ug_m3) %>% 
-#'   filter(campaign != "CampaignX") %>% 
-#'   mutate(week_id = paste(campaign, week, sep = "-"))
-#' 
-#' box_plot <- ggplot(box_data) +
-#'   geom_boxplot(aes(x = week_id, y = bc_ug_m3, color = as.factor(campaign))) +
-#'   scale_color_viridis(name = "Campaign", discrete = T) +
-#'   xlab("Campaign week") + ylab("Distributed site BC concentration (ug/m3)") +
-#'   # theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
-#'   scale_x_discrete(labels = seq(1:length(unique(box_data$week_id)))) +
-#'   simple_theme
-#' box_plot
-#' ggsave(filename = here::here("Figs", "AWMA_Fig1B.jpeg"), 
-#'        height = 5, width = 7, units = "in", device = "jpeg", dpi = 400)
 
 #' -----------------------------------------------------------------------------
 #' Monitoring locations (PM2.5, BC, NO2)
@@ -202,59 +121,67 @@ counties <- c("001", "005", "013", "014", "031", "059")
 pm_data <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv")) %>% 
   filter(!is.na(Arithmetic_Mean)) %>% 
   st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
   filter(County_Code %in% counties) %>% 
   filter(Sample_Duration != "1 HOUR") %>% 
-  select(monitor_id) %>% 
-  distinct(monitor_id) %>% 
-  filter(monitor_id != '080310013')
-pm_data <- st_transform(pm_data, crs = ll_wgs84)
+  arrange(Date_Local, monitor_id) %>%
+  filter(monitor_id != '080310013') %>%
+  st_transform(crs = ll_wgs84)
+pm_mons <- select(pm_data, monitor_id)
+pm_mons <- unique(pm_mons)
 
 #' Black carbon
-bc_data <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv")) %>%
-  filter(!is.na(Arithmetic_Mean)) %>%
-  st_as_sf(wkt = "WKT", crs = albers) %>%
-  filter(County_Code %in% counties) %>%
-  select(monitor_id) %>%
-  distinct(monitor_id)
-bc_data <- st_transform(bc_data, crs = ll_wgs84)
+bc_data <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv")) %>% 
+  filter(!is.na(Arithmetic_Mean)) %>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
+  filter(County_Code %in% counties) %>% 
+  arrange(Date_Local, monitor_id) %>%
+  mutate(Arithmetic_Mean = ifelse(Arithmetic_Mean <= 0.005, NA, Arithmetic_Mean)) %>%
+  st_transform(crs = ll_wgs84) 
+bc_mons <- select(bc_data, monitor_id)
+bc_mons <- unique(bc_mons)
 
 #' NO2
-no2_data <- read_csv(here::here("Data", "Monitor_NO2_Data_AEA.csv")) %>%
-  filter(!is.na(Arithmetic_Mean)) %>%
-  st_as_sf(wkt = "WKT", crs = albers)%>%
-  filter(County_Code %in% counties) %>%
-  select(monitor_id) %>%
-  distinct(monitor_id) %>% 
-  filter(monitor_id != "080590006")
-no2_data <- st_transform(no2_data, crs = ll_wgs84)
+no2_data <- read_csv(here::here("Data", "Monitor_NO2_Data_AEA.csv")) %>% 
+  filter(!is.na(Arithmetic_Mean)) %>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
+  filter(County_Code %in% counties) %>% 
+  arrange(Date_Local, monitor_id) %>%
+  mutate(Arithmetic_Mean = ifelse(Arithmetic_Mean <= 0, NA, Arithmetic_Mean)) %>%
+  filter(monitor_id != "080590006") %>%
+  st_transform(crs = ll_wgs84)
+no2_mons <- select(no2_data, monitor_id)
+no2_mons <- unique(no2_mons)
 
 #' Base map of the area
 base_map <- get_map(location = "Denver, CO", zoom = 10)
 ggmap(base_map)
 attr(base_map, "bb")
 
-ggmap(base_map) +
+ggmap(base_map, darken = c(0.6, "white")) +
   #ggplot() +
-  geom_sf(data = pm_data,
+  geom_sf(data = st_jitter(pm_mons, factor = 0.01),
           aes(fill = "pm", color = "pm", shape = "pm"),
           inherit.aes = F, show.legend = "point", size = 3) +
-  geom_sf(data = bc_data,
-          aes(fill = "bc", color = "bc", shape = "bc"),
-          inherit.aes = F, show.legend = "point", size = 3) +
-  geom_sf(data = no2_data,
+  geom_sf(data = st_jitter(no2_mons, factor = 0.01),
           aes(fill = "no2", color = "no2", shape = "no2"),
           inherit.aes = F, show.legend = "point", size = 3) +
+  geom_sf(data = st_jitter(bc_mons, factor = 0.01),
+          aes(fill = "bc", color = "bc", shape = "bc"),
+          inherit.aes = F, show.legend = "point", size = 3) +
   scale_color_manual(name = "Pollutant", #guide= "legend",
-                     values = c("pm" = "#440154FF",
-                                "bc" = "#39568CFF",
-                                "no2" = "#1F968BFF"),
+                     values = c("pm" = "#3C4F8AFF",
+                                "bc" = "#FDE725FF",
+                                "no2" = "#5CC863FF"),
                      labels = c("pm" = "PM\u2082.\u2085",
                                 "bc" = "Black carbon",
                                 "no2" = "NO\u2082")) +
   scale_fill_manual(name = "Pollutant", #guide= "legend",
-                    values = c("pm" = "#440154FF",
-                               "bc" = "#39568CFF",
-                               "no2" = "#1F968BFF"),
+                    values = c("pm" = "#3C4F8AFF",
+                               "bc" = "#FDE725FF",
+                               "no2" = "#5CC863FF"),
                     labels = c("pm" = "PM\u2082.\u2085",
                                "bc" = "Black carbon",
                                "no2" = "NO\u2082")) +
@@ -265,14 +192,14 @@ ggmap(base_map) +
                      labels = c("pm" = "PM\u2082.\u2085",
                                 "bc" = "Black carbon",
                                 "no2" = "NO\u2082")) +
-  annotation_scale(data = pm_data, #plot_unit = "m", 
+  annotation_scale(data = pm_mons, #plot_unit = "m", 
                    location = "br", width_hint = 0.5,
-                   pad_x = unit(1, "cm"), pad_y = unit(1.1, "cm"),
-                   text_cex = 1.5,
+                   #pad_x = unit(1, "cm"), pad_y = unit(1.1, "cm"),
+                   text_cex = 1,
                    line_col = "black", text_col = "black", text_face = "bold") +
-  annotation_north_arrow(data = pm_data, 
-                         location = "br", which_north = "grid", 
-                         pad_x = unit(0.75, "cm"), pad_y = unit(1.5, "cm"),
+  annotation_north_arrow(data = pm_mons, 
+                         location = "tr", which_north = "grid", 
+                         #pad_x = unit(0.75, "cm"), pad_y = unit(1.5, "cm"),
                          style = north_arrow_minimal(line_col = "black", 
                                                      fill = "black", 
                                                      line_width = 1.6,
@@ -280,13 +207,14 @@ ggmap(base_map) +
                                                      text_face = "bold",
                                                      text_size = 12)) +
   xlab("") + ylab("") +
-  theme(legend.position = c(0.75, 0.85),
-        legend.text = element_text(family="Calibri",size = 16, color = 'black')) +
+  theme(legend.position = c(0.75, 0.25),#"right",
+        legend.text = element_text(size = 16, color = 'black'),
+        text=element_text(family="Helvetica")) +
   # guides(shape = guide_legend(override.aes = list(color = "#3B528BFF",
   #                                                 shape = 19))) +
   map_theme
 
-fig_name <- "Monitoring_Locations.jpeg"
+fig_name <- "EPA_Monitoring_Locations.jpeg"
 ggsave(filename = here::here("Figs", fig_name),
        device = "jpeg", dpi=500, units = "in", height = 5, width = 5)
 
@@ -298,61 +226,52 @@ ggsave(filename = here::here("Figs", fig_name),
 #' Denver Metro area counties
 counties <- c("001", "005", "013", "014", "031", "059")
 
-data_name <- "Combined_Filter_Data_AEA.csv"
-lur_data_sf <- read_csv(here::here("Data", data_name)) %>%
-  filter(!is.na(lon)) %>% 
-  filter(indoor == 0) %>% 
-  filter(bc_ug_m3_dem > 0) %>% 
-  filter(is.na(below_lod) | below_lod == 0) %>% 
-  filter(is.na(low_volume_flag) | low_volume_flag == 0) %>% 
-  filter(is.na(flow_rate_flag) | flow_rate_flag == 0) %>% 
-  filter(is.na(is_blank) | is_blank == 0) %>% 
-  filter(is.na(negative_pm_mass) | negative_pm_mass == 0) %>% 
-  filter(is.na(potential_contamination) | potential_contamination == 0) %>% 
-  filter(is.na(bc_mass_ug_corrected) | bc_mass_ug_corrected >= 1.41) %>%  
+lur_data_sf <- read_csv(here::here("Data", "Final_BC_Data_Set.csv")) %>%
+  filter(!is.na(bc_ug_m3)) %>%
   mutate(lon2 = lon, lat2 = lat) %>%
   st_as_sf(coords = c('lon2', 'lat2'), crs = ll_wgs84) %>%
-  st_transform(crs = albers) %>%
-  rename("bc_ug_m3_raw" = "bc_ug_m3") %>%
-  rename("bc_ug_m3" = "bc_ug_m3_dem") %>% 
-  filter(campaign %in% paste0('Campaign', c(1, 2, 3, "X"))) %>% 
-  st_transform(crs = ll_wgs84)
+  select(site_id, filter_id, campaign)
 
 camp1 <- filter(lur_data_sf, campaign == "Campaign1") %>%
-  group_by(WKT) %>%
-  summarize(count = n()) %>% 
-  st_transform(crs = ll_wgs84) 
+  group_by(site_id) %>%
+  summarize(count = n()) 
 camp2 <- filter(lur_data_sf, campaign == "Campaign2") %>%
-  group_by(WKT) %>%
-  summarize(count = n()) %>% 
-  st_transform(crs = ll_wgs84)
+  group_by(site_id) %>%
+  summarize(count = n()) 
 camp3 <- filter(lur_data_sf, campaign == "Campaign3") %>%
-  group_by(WKT) %>%
-  summarize(count = n()) %>% 
-  st_transform(crs = ll_wgs84)
+  group_by(site_id) %>%
+  summarize(count = n()) 
+camp4 <- filter(lur_data_sf, campaign == "Campaign4") %>%
+  group_by(site_id) %>%
+  summarize(count = n()) 
+camp5 <- filter(lur_data_sf, campaign == "Campaign5") %>%
+  group_by(site_id) %>%
+  summarize(count = n()) 
 central <- filter(lur_data_sf, campaign == "CampaignX") %>%
-  group_by(WKT) %>%
-  summarize(count = n()) %>% 
-  st_transform(crs = ll_wgs84)
+  group_by(site_id) %>%
+  summarize(count = n()) 
 
 #' Central Site
-bc_data <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv")) %>%
-  filter(!is.na(Arithmetic_Mean)) %>%
-  st_as_sf(wkt = "WKT", crs = albers) %>%
-  filter(County_Code %in% counties) %>%
-  select(monitor_id) %>%
-  distinct(monitor_id)
-bc_data <- st_transform(bc_data, crs = ll_wgs84)
+bc_data <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv")) %>% 
+  filter(!is.na(Arithmetic_Mean)) %>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
+  filter(County_Code %in% counties) %>% 
+  arrange(Date_Local, monitor_id) %>%
+  mutate(Arithmetic_Mean = ifelse(Arithmetic_Mean <= 0.005, NA, Arithmetic_Mean)) %>%
+  st_transform(crs = ll_wgs84) 
+bc_mons <- select(bc_data, monitor_id)
+bc_mons <- unique(bc_mons)
 
 #' Base map of the area
 base_map <- get_map(location = "Denver, CO", zoom = 10)
 ggmap(base_map)
 attr(base_map, "bb")
 
-c1_map <- ggmap(base_map) +
+c1_map <- ggmap(base_map, darken = c(0.6, "white")) +
   geom_sf(data = st_jitter(camp1, 0.01), fill = c1_color, color = "black", 
           aes(shape = "dist"), inherit.aes = F, size = 3) +
-  geom_sf(data = bc_data, aes(shape = "cent"), fill = cent_color, color = "black", 
+  geom_sf(data = bc_mons, aes(shape = "cent"), fill = cent_color, color = "black", 
           inherit.aes = F, size = 3) +
   scale_shape_manual(name = "Site Type",
                      values = c("dist" = 21,
@@ -379,10 +298,10 @@ c1_map <- ggmap(base_map) +
   map_theme
 c1_map
 
-c2_map <- ggmap(base_map) +
+c2_map <- ggmap(base_map, darken = c(0.6, "white")) +
   geom_sf(data = st_jitter(camp2, 0.01), fill = c2_color, color = "black", 
           aes(shape = "dist"), inherit.aes = F, size = 3) +
-  geom_sf(data = bc_data, aes(shape = "cent"), fill = cent_color, color = "black", 
+  geom_sf(data = bc_mons, aes(shape = "cent"), fill = cent_color, color = "black", 
           inherit.aes = F, size = 3) +
   scale_shape_manual(name = "Site Type",
                      values = c("dist" = 21,
@@ -409,10 +328,10 @@ c2_map <- ggmap(base_map) +
   map_theme
 c2_map
 
-c3_map <- ggmap(base_map) +
+c3_map <- ggmap(base_map, darken = c(0.6, "white")) +
   geom_sf(data = st_jitter(camp3, 0.01), fill = c3_color, color = "black", 
           aes(shape = "dist"), inherit.aes = F, size = 3) +
-  geom_sf(data = bc_data, aes(shape = "cent"), fill = cent_color, color = "black", 
+  geom_sf(data = bc_mons, aes(shape = "cent"), fill = cent_color, color = "black", 
           inherit.aes = F, size = 3) +
   scale_shape_manual(name = "Site Type",
                      values = c("dist" = 21,
@@ -439,68 +358,111 @@ c3_map <- ggmap(base_map) +
   map_theme
 c3_map
 
-ggarrange(c1_map, c2_map, c3_map, ncol = 3,
-          labels = c("A: Campaign 1", "B: Campaign 2", "C: Campaign 3"),
+c4_map <- ggmap(base_map, darken = c(0.6, "white")) +
+  geom_sf(data = st_jitter(camp4, 0.01), fill = c4_color, color = "black", 
+          aes(shape = "dist"), inherit.aes = F, size = 3) +
+  geom_sf(data = bc_data, aes(shape = "cent"), fill = cent_color, color = "black", 
+          inherit.aes = F, size = 3) +
+  scale_shape_manual(name = "Site Type",
+                     values = c("dist" = 21,
+                                "cent" = 24),
+                     labels = c("dist" = "Distributed (UPAS)",
+                                "cent" = "Central Site BC Monitor")) +
+  # annotation_scale(data = camp4, #plot_unit = "m", 
+  #                  location = "br", width_hint = 0.5,
+  #                  pad_x = unit(0.75, "cm"), pad_y = unit(0.25, "cm"),
+  #                  #text_cex = 1.5,
+  #                  line_col = "black", text_col = "black", text_face = "bold") +
+  # annotation_north_arrow(data = camp4, 
+  #                        location = "br", which_north = "grid", 
+  #                        pad_x = unit(0.5, "cm"), pad_y = unit(0.75, "cm"),
+  #                        style = north_arrow_minimal(line_col = "black", 
+  #                                                    fill = "black", 
+  #                                                    line_width = 0.5,
+  #                                                    text_col = "black",
+  #                                                    text_face = "bold",
+  #                                                    text_size = 10)) +
+  xlab("") + ylab("") +
+  theme(legend.position = c(0.15, 0.25)) +
+  xlim(-105.3, -104.625) + ylim(39.5, 40.0) +
+  map_theme
+c4_map
+
+c5_map <- ggmap(base_map, darken = c(0.6, "white")) +
+  geom_sf(data = st_jitter(camp5, 0.01), fill = c5_color, color = "black", 
+          aes(shape = "dist"), inherit.aes = F, size = 3) +
+  geom_sf(data = bc_mons, aes(shape = "cent"), fill = cent_color, color = "black", 
+          inherit.aes = F, size = 3) +
+  scale_shape_manual(name = "Site Type",
+                     values = c("dist" = 21,
+                                "cent" = 24),
+                     labels = c("dist" = "Distributed (UPAS)",
+                                "cent" = "Central Site BC Monitor")) +
+  # annotation_scale(data = camp5, #plot_unit = "m", 
+  #                  location = "br", width_hint = 0.5,
+  #                  pad_x = unit(0.75, "cm"), pad_y = unit(0.25, "cm"),
+  #                  #text_cex = 1.5,
+  #                  line_col = "black", text_col = "black", text_face = "bold") +
+  # annotation_north_arrow(data = camp5, 
+  #                        location = "br", which_north = "grid", 
+  #                        pad_x = unit(0.5, "cm"), pad_y = unit(0.75, "cm"),
+  #                        style = north_arrow_minimal(line_col = "black", 
+  #                                                    fill = "black", 
+  #                                                    line_width = 0.5,
+  #                                                    text_col = "black",
+  #                                                    text_face = "bold",
+  #                                                    text_size = 10)) +
+  xlab("") + ylab("") +
+  theme(legend.position = c(0.15, 0.25)) +
+  xlim(-105.3, -104.625) + ylim(39.5, 40.0) +
+  map_theme
+c5_map
+
+ggarrange(c1_map, c2_map, c3_map, c4_map, c5_map, ncol = 3, nrow = 2,
+          labels = c("A: Campaign 1", "B: Campaign 2", "C: Campaign 3",
+                     "D: Campaign 4", "E: Campaign5"),
           common.legend = T, legend = "bottom",
           hjust = -0.25)
 
 ggsave(file = here::here("Figs", "Sample_Locations_by_Campaign.jpeg"),
-       device = "jpeg", units = "in", height = 4.25, width = 10, dpi = 500)
+       device = "jpeg", units = "in", height = 9, width = 11, dpi = 500)
 
 #' -----------------------------------------------------------------------------
 #' Figure 2: Boxplots of BC concentrations by week
 #' -----------------------------------------------------------------------------
 
-data_name <- "Combined_Filter_Data_AEA.csv"
-lur_data_sf <- read_csv(here::here("Data", data_name)) %>%
-  filter(!is.na(lon)) %>% 
-  filter(indoor == 0) %>% 
-  filter(bc_ug_m3_dem > 0) %>% 
-  filter(is.na(below_lod) | below_lod == 0) %>% 
-  filter(is.na(low_volume_flag) | low_volume_flag == 0) %>% 
-  filter(is.na(flow_rate_flag) | flow_rate_flag == 0) %>% 
-  filter(is.na(is_blank) | is_blank == 0) %>% 
-  filter(is.na(negative_pm_mass) | negative_pm_mass == 0) %>% 
-  filter(is.na(potential_contamination) | potential_contamination == 0) %>% 
-  filter(is.na(bc_mass_ug_corrected) | bc_mass_ug_corrected >= 1.41) %>%  
+lur_data_sf <- read_csv(here::here("Data", "Final_BC_Data_Set.csv")) %>%
+  filter(!is.na(bc_ug_m3)) %>%
   mutate(lon2 = lon, lat2 = lat) %>%
   st_as_sf(coords = c('lon2', 'lat2'), crs = ll_wgs84) %>%
-  st_transform(crs = albers) %>%
-  rename("pm_ug_m3_raw" = "pm_ug_m3") %>%
-  rename("pm_ug_m3" = "pm_ug_m3_lm") %>%
-  rename("bc_ug_m3_raw" = "bc_ug_m3") %>%
-  rename("bc_ug_m3" = "bc_ug_m3_dem") %>% 
-  filter(campaign %in% paste0('Campaign', c(1, 2, 3)))
+  select(site_id, filter_id, campaign, st_week, bc_ug_m3) %>%
+  filter(campaign != "CampaignX")
   
 nrow(lur_data_sf)
 
-lur_data_sf <- lur_data_sf %>%
-  mutate(sample_week_no = format(StartDateLocal, "%Y-%W")) %>%
-  mutate(sample_week = as.Date(cut(as.Date(StartDateLocal), "week")))
-
-#' Add a unique site ID
-ids <- read_csv(here::here("Data", "ST_Model_Site_IDs.csv"))
-
-lur_data_sf <- mutate(lur_data_sf, site_id_lonlat = paste(lon, lat, sep = "_"))
-lur_data_sf <- left_join(lur_data_sf, ids, by = "site_id_lonlat") %>%
-  mutate(site_id = ifelse(filter_id == "080310027", "central", site_id))
-
 box_data <- lur_data_sf %>%
-  select(site_id, campaign, sample_week, bc_ug_m3) 
+  select(site_id, campaign, st_week, bc_ug_m3) 
 
+camp_names <- c("Campaign 1", "Campaign 2", "Campaign 3",
+                "Campaign 4", "Campaign 5")
+names(camp_names) <- c("Campaign1", "Campaign2", "Campaign3",
+                       "Campaign4", "Campaign5")
 box_plot <- ggplot(box_data) +
-  geom_boxplot(aes(x = as.Date(sample_week), y = bc_ug_m3, group = sample_week, 
+  geom_boxplot(aes(x = as.Date(st_week), y = bc_ug_m3, group = st_week, 
                color = as.factor(campaign))) +
   scale_color_manual(name = "Campaign",
-                     labels = c("Campaign 1", "Campaign 2", "Campaign 3"),
-                     values = c(c1_color, c2_color, c3_color)) +
+                     labels = c("Campaign 1", "Campaign 2", "Campaign 3",
+                                "Campaign 4", "Campaign 5"),
+                     values = c(c1_color, c2_color, c3_color, c4_color, c5_color)) +
   xlab("Sampling week") + ylab("Distributed site BC concentration (\u03BCg/m\u00B3)") +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
-  scale_x_date(date_labels = "%m-%d-%Y", date_breaks = "2 weeks") +
+  facet_wrap(. ~ campaign, nrow = 1, scales = "free_x", 
+             labeller = labeller(campaign = camp_names)) +
+  scale_x_date(date_labels = "%m-%d-%Y", date_breaks = "1 weeks") +
   simple_theme2 +
-  theme(legend.position = c(0.15, 0.8))
+  theme(legend.position = "none")
 box_plot
-ggsave(filename = here::here("Figs", "UPAS_BC_Boxplot.jpeg"),
+ggsave(filename = here::here("Figs", "UPAS_BC_Boxplot_by_Campaign.jpeg"),
        height = 4.5, width = 6, units = "in", device = "jpeg", dpi = 500)
 
 #' -----------------------------------------------------------------------------
@@ -519,16 +481,16 @@ names(denver.data.B)
 trend_df <- as.data.frame(denver.data.B$trend)
 site_df <- as.data.frame(denver.data.B$obs)
 
+#' Layout for the plots
+#' Three rows, two columns
 jpeg(here::here("Figs", "Basis_Function_Plot.jpg"), 
-     width = 7, height = 5, units = "in", res = 500)
+     width = 7, height = 7, units = "in", res = 500)
 
 #' Layout for the plots
 #' Three rows, two columns
-# layout(matrix(c(1,1,2,3,4,5), 3, 2, byrow = TRUE),
-#        heights = c(2, 1.5, 1.5))
-layout(matrix(c(1,1,2,2,3,3), 3, 2, byrow = TRUE),
-       heights = c(2, 1.5, 1.5))
-par(mar = c(2, 2, 2, 2))
+layout(matrix(c(1,1,2,2,3,3,4,4,5,5), 5, 2, byrow = TRUE),
+       heights = c(2, 1.5, 1.5, 1.5, 1.5))
+par(mar = c(2, 2, 2, 2), oma=c(2, 2, 2, 2))
 #' Basis functions
 plot(denver.data.B$trend$date, denver.data.B$trend$V1, type = "l",
      lty = 1, cex = 2, main = "",
@@ -548,13 +510,32 @@ title("B) Central site monitor", adj = 0)
 #      cex = 1.5)
 # plot(denver.data.B, "acf", ID="central", xlab = "", ylab = "ACF", main = "")
 
-#' Obs at site d_34
-plot(denver.data.B, "obs", ID="d_15", xlab = "", 
+#' Obs at site d_5
+plot(denver.data.B, "obs", ID="d_5", xlab = "", 
      ylab="UPAS BC (log \u03BCg/m\u00B3)", main = "") 
-title("C) Distributed site no. 15", adj = 0)
+title("C) Distributed site no. 5", adj = 0)
 # text(x = as.Date("2016-07-01"), y = 3, labels = "Distributed Site no. 15",
 #      cex = 1.5)
 # plot(denver.data.B, "acf", ID="d_15", xlab = "", ylab = "ACF", main = "")
+
+#' Obs at site d_15
+plot(denver.data.B, "obs", ID="d_15", xlab = "", 
+     ylab="UPAS BC (log \u03BCg/m\u00B3)", main = "") 
+title("D) Distributed site no. 15", adj = 0)
+# text(x = as.Date("2016-07-01"), y = 3, labels = "Distributed Site no. 15",
+#      cex = 1.5)
+# plot(denver.data.B, "acf", ID="d_15", xlab = "", ylab = "ACF", main = "")
+
+#' Obs at site d_30
+plot(denver.data.B, "obs", ID="d_40", xlab = "", 
+     ylab="UPAS BC (log \u03BCg/m\u00B3)", main = "") 
+title("E) Distributed site no. 40", adj = 0)
+# text(x = as.Date("2016-07-01"), y = 3, labels = "Distributed Site no. 15",
+#      cex = 1.5)
+# plot(denver.data.B, "acf", ID="d_15", xlab = "", ylab = "ACF", main = "")
+
+mtext("Standarized (unitless) pollutant measure", side=2, line=0,
+      outer=TRUE, cex=1, las=0)
 
 dev.off()
 par(mfrow=c(1,1))
@@ -594,19 +575,30 @@ summary(pred.B.cv.log)
 #' abline(0, 1, col="grey")
 
 #' Plotting in ggplot2
-cv_data <- as.data.frame(pred.B.cv.log$pred.obs)
+cv_data <- as.data.frame(pred.B.cv.log$pred.obs) %>%
+  mutate(month = month(date)) %>%
+  mutate(season = ifelse(month %in% c(12, 1, 2), 1, 
+                         ifelse(month %in% c(3, 4, 5), 2, 
+                                ifelse(month %in% c(6, 7, 8), 3, 4))))
 head(cv_data)
 
 lta_data <- as.data.frame(pred.B.cv.log$pred.LTA)
 
 cv_plot <- ggplot(data = cv_data) +
   coord_equal() +
-  geom_point(aes(x = obs, y = EX.pred)) +
+  geom_point(aes(x = obs, y = EX.pred, color = as.factor(season))) +
   geom_abline(slope = 1, intercept = 0, linetype = 2, color = "grey50") +
+  scale_color_viridis(name = "Season", discrete = T,
+                      labels = c("1" = "Winter", "2" = "Spring",
+                                 "3" = "Summer", "4" = "Fall")) +
   xlab("BC Observations (\u03BCg/m\u00B3)") + ylab("BC Predictions (\u03BCg/m\u00B3)") +
   xlim(c(0.7, 2.5)) + ylim(c(0.7, 2.5)) +
   simple_theme +
-  theme(plot.margin=grid::unit(c(2,2,2,2), "mm"))
+  theme(plot.margin=grid::unit(c(2,2,2,2), "mm"),
+        legend.position = c(0.85, 0.2),
+        #legend.background = element_rect(fill = "transparent"),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(size = 12))
 cv_plot
 
 lta_plot <- ggplot(data = lta_data) +
@@ -660,10 +652,10 @@ grid_sf <- read_csv(here::here("Data", "Spatial_Covariates_Grid_250_m_AEA.csv"))
 grid_sf_lta <- left_join(grid_sf, grid_lta_preds, by = "grid_id") %>% 
   st_as_sf(wkt = "WKT", crs = albers)
 
-denver <- st_read(here::here("Data", "Colorado_County_Boundaries.shp")) %>%
-  filter(CNTY_FIPS == "031") %>%
-  st_transform(crs = ll_wgs84)
-plot(st_geometry(denver))
+# denver <- st_read(here::here("Data", "Colorado_County_Boundaries.shp")) %>%
+#   filter(CNTY_FIPS == "031") %>%
+#   st_transform(crs = ll_wgs84)
+# plot(st_geometry(denver))
 
 grid_pts <- data.frame(lon = c(-105.05, -105.05, -104.85, -104.85),
                        lat = c(39.65, 39.85, 39.65, 39.85)) %>%
@@ -701,7 +693,7 @@ g1
 g2 <- ggplot() +
   #geom_sf(data = grid_bounds, color = "transparent") +
   geom_sf(data = grid_sf_lta[grid_box2,], aes(fill = EX), color = NA) +
-  geom_sf(data = highways2_crop, color = "white", size = 1) +
+  geom_sf(data = highways2_crop, color = "white", size = 0.5) +
   scale_fill_viridis(name = "2018 mean\n BC (\u03BCg/m\u00B3)",
                      breaks = waiver(), n.breaks = 6) +
   annotation_scale(data = grid_sf_lta[grid_box2,], plot_unit = "m",
@@ -768,7 +760,7 @@ box_preds <- week_preds %>%
   #filter(week %in% week_weeks) %>% 
   mutate(month = month(week),
          year = year(week)) %>% 
-  filter(year %in% c(2009:2018))
+  filter(year %in% c(2009:2020))
 
 box_data <- box_preds %>% 
   pivot_longer(-c(week, month, year), names_to = "location", values_to = "pred")
@@ -832,7 +824,7 @@ highways_crop <- st_crop(highways, st_bbox(grid_sf_lta))
 
 lta_map <- ggplot() +
   geom_sf(data = grid_sf_lta, aes(fill = EX), color = NA, show.legend = F) +
-  geom_sf(data = highways_crop, color = "white", size = 1, show.legend = F) +
+  geom_sf(data = highways_crop, color = "white", size = 0.5, show.legend = F) +
   scale_fill_viridis(name = "2018 mean\n BC (\u03BCg/m\u00B3)",
                      breaks = waiver(), n.breaks = 6) +
   annotation_scale(data = grid_sf_lta, plot_unit = "m", 
@@ -895,29 +887,13 @@ par(mfrow=c(1,1))
 #' Denver Metro area counties
 counties <- c("001", "005", "013", "014", "031", "059")
 
-data_name <- "Combined_Filter_Data_AEA.csv"
-lur_data_sf2 <- read_csv(here::here("Data", data_name)) %>%
-  filter(!is.na(lon)) %>% 
-  filter(indoor == 0) %>% 
-  filter(bc_ug_m3_dem > 0) %>% 
-  filter(is.na(below_lod) | below_lod == 0) %>% 
-  filter(is.na(low_volume_flag) | low_volume_flag == 0) %>% 
-  filter(is.na(flow_rate_flag) | flow_rate_flag == 0) %>% 
-  filter(is.na(is_blank) | is_blank == 0) %>% 
-  filter(is.na(negative_pm_mass) | negative_pm_mass == 0) %>% 
-  filter(is.na(potential_contamination) | potential_contamination == 0) %>% 
-  filter(is.na(bc_mass_ug_corrected) | bc_mass_ug_corrected >= 1.41) %>%  
+lur_data_sf2 <- read_csv(here::here("Data", "Final_BC_Data_Set.csv")) %>%
+  filter(!is.na(bc_ug_m3)) %>%
   mutate(lon2 = lon, lat2 = lat) %>%
   st_as_sf(coords = c('lon2', 'lat2'), crs = ll_wgs84) %>%
-  st_transform(crs = albers) %>%
-  rename("bc_ug_m3_raw" = "bc_ug_m3") %>%
-  rename("bc_ug_m3" = "bc_ug_m3_dem") %>% 
-  filter(campaign %in% paste0('Campaign', c(1, 2, 3, "X"))) %>% 
-  st_transform(crs = ll_wgs84) %>% 
-  mutate(site_id_lon_lat = paste(lon, lat, sep = "_")) %>%
-  select(site_id_lon_lat) %>%
-  distinct(site_id_lon_lat)
-
+  select(site_id, filter_id, campaign)
+lur_data_sf2 <- select(lur_data_sf2, site_id)
+lur_data_sf2 <- unique(lur_data_sf2)
 nrow(lur_data_sf2)
 
 #' Base map of the area
@@ -928,14 +904,14 @@ attr(base_map, "bb")
 upas_map <- ggmap(base_map) +
   geom_sf(data = st_jitter(lur_data_sf2, 0.01), fill = c1_color, color = "black", 
           shape = 21, inherit.aes = F, size = 3) +
-  annotation_scale(data = lur_data_sf, #plot_unit = "m",
+  annotation_scale(data = lur_data_sf2, #plot_unit = "m",
                    location = "br", width_hint = 0.5,
-                   pad_x = unit(1, "cm"), pad_y = unit(1.1, "cm"),
+                   #pad_x = unit(1, "cm"), pad_y = unit(1.1, "cm"),
                    text_cex = 1.5,
                    line_col = "black", text_col = "black", text_face = "bold") +
   annotation_north_arrow(data = lur_data_sf,
-                         location = "br", which_north = "grid",
-                         pad_x = unit(0.75, "cm"), pad_y = unit(1.5, "cm"),
+                         location = "tr", which_north = "grid",
+                         #pad_x = unit(0.75, "cm"), pad_y = unit(1.5, "cm"),
                          style = north_arrow_minimal(line_col = "black",
                                                      fill = "black",
                                                      line_width = 1.6,

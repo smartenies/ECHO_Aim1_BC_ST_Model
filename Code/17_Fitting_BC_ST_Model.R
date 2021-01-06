@@ -132,6 +132,8 @@ lur_data <- bind_rows(dist_data, central_data) %>%
 head(lur_data$st_week)
 tail(lur_data$st_week)
 
+write_csv(lur_data, here::here("Data", "Final_BC_Data_Set.csv"))
+
 #' Log-transformed BC observations with NA values for the missing dates
 #' Note that campaign 5 has duplicate measures, so we need to average them
 bc_obs <- lur_data %>%
