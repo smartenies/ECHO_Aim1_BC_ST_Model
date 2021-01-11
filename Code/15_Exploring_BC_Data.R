@@ -467,3 +467,86 @@ grid <- spsample(site_data_sp, type = 'regular', n = 10000)
 all_idw <- idw(site_data_sp$bc_ug_m3 ~ 1, site_data_sp, newdata = grid)
 spplot(all_idw["var1.pred"]) +
   layer(sp.lines(highways_sp, col = "black", cex = 0.1))
+
+#'------------------------------------------------------------------------------
+#' E) Creating final data sets
+#'------------------------------------------------------------------------------
+
+data_name <- "Combined_Filter_Data_AEA.csv"
+all_data <- read_csv(here::here("Data", data_name))
+
+#' Select a "calibrated" version of the data
+#' For now, go with Deming regression-- accounts for variability in the
+#' monitor and the UPAS data and the temporal mismatch in TWAs
+all_data$bc_ug_m3 <- all_data$bc_ug_m3_dem
+all_data$pm_ug_m3 <- all_data$pm_ug_m3_dem
+
+#' List of sites that failed preliminary screening (see 15_Exploring_BC_Data.R)
+#' These are all the sites (by campaign) where BC measurements had a CV > 30%
+#' Note that all of these are in Campaign 4
+cv_drop <- read_csv(here::here("Data/Dropped_Sites_by_Campaign.csv"))
+
+filter_data <- filter(all_data, is.na(filter_id) | filter_id != "080310027") %>%
+  filter(is.na(indoor) | indoor == 0) %>%
+  filter(is.na(is_blank) | is_blank == 0) %>% 
+  #' QA filters
+  filter(is.na(bc_below_lod) | bc_below_lod == 0) %>% 
+  filter(is.na(pm_below_lod) | pm_below_lod == 0) %>%
+  filter(is.na(negative_pm_mass) | negative_pm_mass == 0) %>% 
+  filter(is.na(ultralow_volume_flag) | ultralow_volume_flag == 0) %>%
+  filter(is.na(potential_contamination) | potential_contamination == 0)
+
+dist_data <- bind_rows(filter(filter_data, is.na(campaign) | campaign != "Campaign4"),
+                       filter(filter_data, campaign == "Campaign4" & !(site_id %in% cv_drop$site_id))) %>%
+  arrange(st_week)
+head(dist_data$sample_week)
+tail(dist_data$sample_week)
+head(dist_data$st_week)
+tail(dist_data$st_week)
+
+length(unique(dist_data$filter_id))
+summary(dist_data$bc_ug_m3)
+quantile(dist_data$bc_ug_m3, probs = c(0.05, 0.95), na.rm = T)
+sd(dist_data$bc_ug_m3, na.rm = T)
+sd(dist_data$bc_ug_m3, na.rm = T) / mean(dist_data$bc_ug_m3, na.rm = T)
+
+dist_data2 <- filter(dist_data, st_week == sample_week) %>%
+  filter(!is.na(bc_ug_m3))
+glimpse(dist_data2)
+
+write_csv(dist_data2, here::here("Data", "Final_Filters_for_ST_Model.csv"))
+
+#' All of the dropped data should be in Campaign 4
+dropped_data <- filter(filter_data, campaign == "Campaign4" & site_id %in% cv_drop$site_id)
+length(unique(dropped_data$filter_id))
+summary(dropped_data$bc_ug_m3)
+quantile(dropped_data$bc_ug_m3, probs = c(0.05, 0.95))
+sd(dropped_data$bc_ug_m3)
+sd(dropped_data$bc_ug_m3) / mean(dropped_data$bc_ug_m3)
+
+write_csv(dropped_data, here::here("Data", "Dropped_Filters_for_ST_Model.csv"))
+
+#' central site data
+central_data <- filter(all_data, filter_id == "080310027") %>%
+  arrange(st_week)
+head(central_data$sample_week)
+tail(central_data$sample_week)
+head(central_data$st_week)
+tail(central_data$st_week)
+
+#' Add prefix to site_ids
+unique(dist_data$site_id)
+dist_data$site_id <- paste0("d_", dist_data$site_id)
+unique(dist_data$site_id)
+
+unique(central_data$site_id)
+central_data$site_id <- "central"
+unique(central_data$site_id)
+
+#' put these data sets back together
+lur_data <- bind_rows(dist_data, central_data) %>%
+  arrange(site_id, st_week)
+head(lur_data$st_week)
+tail(lur_data$st_week)
+
+write_csv(lur_data, here::here("Data", "Final_BC_Data_Set_for_ST_Model.csv"))

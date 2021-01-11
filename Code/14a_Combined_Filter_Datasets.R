@@ -72,7 +72,7 @@ filter_data <- full_join(filter_pm, filter_bc, by = c("filter_id", "campaign")) 
          StartDateTimeLocal, EndDateTimeLocal, sample_week, st_week,
          logged_runtime, logged_rt_volume_L, low_volume_flag, ultralow_volume_flag,
          pm_below_lod, pm_below_loq, bc_below_lod, 
-         negative_pm_mass, potential_contamination,
+         negative_pm_mass, potential_contamination, 
          pm_mass_ug, bc_mass_ug_corrected, blank_corrected_bc, bc_blank_mean,
          pm_ug_m3_raw:pm_ug_m3_dem, bc_ug_m3_raw:bc_ug_m3_dem,
          Al_ug_m3:Zn_ug_m3) 

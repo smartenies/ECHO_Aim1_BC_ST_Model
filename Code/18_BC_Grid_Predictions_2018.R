@@ -89,75 +89,19 @@ ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
 #' Prep the data
 #' -----------------------------------------------------------------------------
 
-data_name <- "Combined_Filter_Data_AEA.csv"
-all_data <- read_csv(here::here("Data", data_name))
-
-#' Select a "calibrated" version of the data
-#' For now, go with Deming regression-- accounts for variability in the
-#' monitor and the UPAS data and the temporal mismatch in TWAs
-all_data$bc_ug_m3 <- all_data$bc_ug_m3_dem
-all_data$pm_ug_m3 <- all_data$pm_ug_m3_dem
-
-#' List of sites that failed preliminary screening (see 15_Exploring_BC_Data.R)
-#' These are all the sites (by campaign) where BC measurements had a CV > 30%
-#' Note that all of these are in Campaign 4
-cv_drop <- read_csv(here::here("Data/Dropped_Sites_by_Campaign.csv"))
-
-filter_data <- filter(all_data, is.na(filter_id) | filter_id != "080310027") %>%
-  filter(is.na(indoor) | indoor == 0) %>%
-  filter(is.na(is_blank) | is_blank == 0) %>% 
-  #' QA filters
-  filter(is.na(bc_below_lod) | bc_below_lod == 0) %>% 
-  filter(is.na(negative_pm_mass) | negative_pm_mass == 0) %>% 
-  filter(is.na(potential_contamination) | potential_contamination == 0)
-
-dist_data <- bind_rows(filter(filter_data, is.na(campaign) | campaign != "Campaign4"),
-                       filter(filter_data, campaign == "Campaign4" & !(site_id %in% cv_drop$site_id))) %>%
-  arrange(st_week)
-head(dist_data$sample_week)
-tail(dist_data$sample_week)
-head(dist_data$st_week)
-tail(dist_data$st_week)
-
-length(unique(dist_data$filter_id))
-summary(dist_data$bc_ug_m3)
-quantile(dist_data$bc_ug_m3, probs = c(0.05, 0.95), na.rm = T)
-sd(dist_data$bc_ug_m3, na.rm = T)
-sd(dist_data$bc_ug_m3, na.rm = T) / mean(dist_data$bc_ug_m3, na.rm = T)
-
-#' All of the dropped data should be in Campaign 4
-dropped_data <- filter(filter_data, campaign == "Campaign4" & site_id %in% cv_drop$site_id)
-length(unique(dropped_data$filter_id))
-summary(dropped_data$bc_ug_m3)
-quantile(dropped_data$bc_ug_m3, probs = c(0.05, 0.95))
-sd(dropped_data$bc_ug_m3)
-sd(dropped_data$bc_ug_m3) / mean(dropped_data$bc_ug_m3)
-
-#' central site data
-central_data <- filter(all_data, filter_id == "080310027") %>%
-  arrange(st_week)
-head(central_data$sample_week)
-tail(central_data$sample_week)
-head(central_data$st_week)
-tail(central_data$st_week)
-
-#' Add prefix to site_ids
-unique(dist_data$site_id)
-dist_data$site_id <- paste0("d_", dist_data$site_id)
-unique(dist_data$site_id)
-
-unique(central_data$site_id)
-central_data$site_id <- "central"
-unique(central_data$site_id)
-
-#' put these data sets back together
-lur_data <- bind_rows(dist_data, central_data) %>%
-  arrange(site_id, st_week)
-head(lur_data$st_week)
-tail(lur_data$st_week)
+lur_data_all <- read_csv(here::here("Data", "Final_BC_Data_Set_for_ST_Model.csv"))
 
 #' Log-transformed BC observations with NA values for the missing dates
 #' Note that campaign 5 has duplicate measures, so we need to average them
+# bc_check <- lur_data_all %>%
+#   group_by(site_id) %>%
+#   summarize(all_na = ifelse(all(is.na(bc_ug_m3)), 1, 0)) %>%
+#   filter(all_na == 1)
+# bc_check
+
+# lur_data <- filter(lur_data_all, !(site_id %in% bc_check$site_id))
+lur_data <- lur_data_all
+
 bc_obs <- lur_data %>%
   dplyr::select(site_id, st_week, bc_ug_m3) %>%
   group_by(site_id, st_week) %>%
@@ -182,18 +126,19 @@ tail(bc_weeks)
 #' Spatial covariates (scaled)
 load(here::here("Results", "BC_LASSO_Model_5C.Rdata"))
 
-lasso_coef_df <- data.frame(name = log_bc_lasso_coef4@Dimnames[[1]][log_bc_lasso_coef4@i + 1],
-                            coefficient = log_bc_lasso_coef4@x)
+lasso_coef_df <- data.frame(name = log_bc_lasso_coef3@Dimnames[[1]][log_bc_lasso_coef3@i + 1],
+                            coefficient = log_bc_lasso_coef3@x)
 covars <- as.character(lasso_coef_df$name[-1])
 covars 
 
 covar_fun <- paste("~", paste(covars, collapse = " + "))
 covar_fun
 
-bc_sp_cov <- dplyr::select(lur_data, site_id, lon, lat, all_of(covars)) %>%
-  distinct() %>%
-  mutate_at(.vars = vars(all_of(covars)),
-            scale)
+bc_sp_cov <- select(lur_data, site_id, lon, lat, all_of(covars)) %>%
+  distinct() #%>%
+  # mutate_at(.vars = vars(all_of(covars)),
+  #           scale)
+summary(bc_sp_cov)
 
 bc_sp_cov <- bc_sp_cov %>%
   rename(ID = site_id) %>%
@@ -206,10 +151,11 @@ names(sp_coords) <- c("x", "y")
 bc_sp_cov <- bind_cols(bc_sp_cov, sp_coords) %>%
   st_set_geometry(NULL) %>%
   as.data.frame()
+head(bc_sp_cov)
 
 bc_sp_cov$type <- ifelse(bc_sp_cov$ID == "central", "central", "dist")
 bc_sp_cov$type <- as.factor(bc_sp_cov$type)
-
+summary(bc_sp_cov)
 cor(bc_sp_cov[,covars])
 
 #' NO2, and smoke spatiotemporal predictors
@@ -242,6 +188,7 @@ bc_st_smk <- as.matrix(bc_st_smk)
 
 smk_weeks <- rownames(bc_st_smk)
 tail(smk_weeks)
+tail(bc_weeks)
 setdiff(bc_weeks, smk_weeks)
 
 #' -----------------------------------------------------------------------------
@@ -271,9 +218,8 @@ grid_sp <- bind_cols(grid_sp, sp_coords2) %>%
 names(grid_sp)
 
 grid_sp_cov <- dplyr::select(grid_sp, grid_id, lon, lat, x, y, all_of(covars)) %>%
-  distinct() %>%
-mutate_at(.vars = vars(covars),
-          scale)
+  distinct() #%>%
+  #mutate_at(.vars = vars(all_of(covars)), scale)
 
 grid_sp_cov <- grid_sp_cov %>%
   rename(ID = grid_id) %>% 
@@ -396,8 +342,9 @@ head(rownames(obs))
 head(colnames(obs))
 
 #' SP predictors
-sp_cov <- bind_rows(bc_sp_cov, grid_sp_cov) #%>% 
-  #mutate_at(.vars = vars(covars), scale)
+sp_cov <- bind_rows(bc_sp_cov, grid_sp_cov) %>%
+  mutate_at(.vars = vars(all_of(covars)),
+            scale)
 sp_cov$type <- as.factor(sp_cov$type)
 glimpse(sp_cov)
 
@@ -533,41 +480,41 @@ save(E.1, file = here::here("Results", "Grid_LTA_Preds_2018.rdata"))
 #' Check out the predicted values
 #' -----------------------------------------------------------------------------
 
-load(here::here("Results", "Grid_LTA_Preds_2018.rdata"))
-
-#' Long term averages for 2018
-lta_preds <- as.data.frame(E.1$EX) %>% 
-  mutate(week = as.Date(rownames(E.1$EX)))
-
-lta_weeks <- seq.Date(as.Date("2018-01-01"), as.Date("2018-12-31"), by = "day") 
-lta_sites <- colnames(lta_preds)[which(str_detect(colnames(lta_preds), "g_"))]
-
-lta_preds_avg <- lta_preds %>% 
-  filter(week %in% lta_weeks) %>% 
-  summarize_at(vars(all_of(lta_sites)), mean, na.rm = TRUE)
-dim(lta_preds_avg)
-
-grid_lta_preds <- lta_preds_avg %>% 
-  pivot_longer(cols = starts_with("g_"), names_to = "grid_id", values_to = "EX") %>% 
-  mutate(grid_id = gsub("_mean", "", grid_id))
-head(grid_lta_preds)
-
-summary(grid_lta_preds$EX)
+#' load(here::here("Results", "Grid_LTA_Preds_2018.rdata"))
+#' 
+#' #' Long term averages for 2018
+#' lta_preds <- as.data.frame(E.1$EX) %>% 
+#'   mutate(week = as.Date(rownames(E.1$EX)))
+#' 
+#' lta_weeks <- seq.Date(as.Date("2018-01-01"), as.Date("2018-12-31"), by = "day") 
+#' lta_sites <- colnames(lta_preds)[which(str_detect(colnames(lta_preds), "g_"))]
+#' 
+#' lta_preds_avg <- lta_preds %>% 
+#'   filter(week %in% lta_weeks) %>% 
+#'   summarize_at(vars(all_of(lta_sites)), mean, na.rm = TRUE)
+#' dim(lta_preds_avg)
+#' 
+#' grid_lta_preds <- lta_preds_avg %>% 
+#'   pivot_longer(cols = starts_with("g_"), names_to = "grid_id", values_to = "EX") %>% 
+#'   mutate(grid_id = gsub("_mean", "", grid_id))
+#' head(grid_lta_preds)
+#' 
+#' summary(grid_lta_preds$EX)
 
 #' -----------------------------------------------------------------------------
 #' Plot LTA for grid locations
 #' -----------------------------------------------------------------------------
 
-grid_sf <- read_csv(here::here("Data", "Spatial_Covariates_Grid_250_m_AEA.csv")) %>% 
-  mutate(grid_id = paste0("g_", grid_id))
-
-grid_sf_lta <- left_join(grid_sf, grid_lta_preds, by = "grid_id") %>% 
-  st_as_sf(wkt = "WKT", crs = albers)
-
-highways <- read_csv(here::here("Data", "Highways_AEA.csv")) %>% 
-  st_as_sf(wkt = "WKT", crs = albers)
-highways_crop <- st_crop(highways, st_bbox(grid_sf_lta))
-
+# grid_sf <- read_csv(here::here("Data", "Spatial_Covariates_Grid_250_m_AEA.csv")) %>% 
+#   mutate(grid_id = paste0("g_", grid_id))
+# 
+# grid_sf_lta <- left_join(grid_sf, grid_lta_preds, by = "grid_id") %>% 
+#   st_as_sf(wkt = "WKT", crs = albers)
+# 
+# highways <- read_csv(here::here("Data", "Highways_AEA.csv")) %>% 
+#   st_as_sf(wkt = "WKT", crs = albers)
+# highways_crop <- st_crop(highways, st_bbox(grid_sf_lta))
+# 
 # ggplot() +
 #   geom_sf(data = grid_sf_lta, aes(fill = EX), color = NA) +
 #   geom_sf(data = highways_crop, color = "white", size = 1) +

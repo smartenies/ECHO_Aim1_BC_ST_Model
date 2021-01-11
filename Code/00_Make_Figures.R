@@ -463,7 +463,7 @@ box_plot <- ggplot(box_data) +
   theme(legend.position = "none")
 box_plot
 ggsave(filename = here::here("Figs", "UPAS_BC_Boxplot_by_Campaign.jpeg"),
-       height = 4.5, width = 6, units = "in", device = "jpeg", dpi = 500)
+       height = 4.5, width = 7, units = "in", device = "jpeg", dpi = 500)
 
 #' -----------------------------------------------------------------------------
 #' Figure 3: Time trends
@@ -555,9 +555,11 @@ library(maps)
 
 load(here::here("Results", "Denver_ST_Model_B.rdata"))
 
+print(est.denver.model.B)
+
 #' Get CV predictions for the plot
-pred.B.cv.log <- predictCV(denver.model.B, est.denver.B.cv,
-                             LTA = T, transform="unbiased")
+pred.B.cv.log <- predictCV(denver.model.B, est.denver.B.cv,# LTA = T,
+                             transform="unbiased")
 
 names(pred.B.cv.log)
 summary(pred.B.cv.log)
@@ -576,21 +578,28 @@ summary(pred.B.cv.log)
 
 #' Plotting in ggplot2
 cv_data <- as.data.frame(pred.B.cv.log$pred.obs) %>%
+  filter(ID != "central") %>%
   mutate(month = month(date)) %>%
   mutate(season = ifelse(month %in% c(12, 1, 2), 1, 
                          ifelse(month %in% c(3, 4, 5), 2, 
                                 ifelse(month %in% c(6, 7, 8), 3, 4))))
 head(cv_data)
 
-lta_data <- as.data.frame(pred.B.cv.log$pred.LTA)
+#lta_data <- as.data.frame(pred.B.cv.log$pred.LTA)
+lta_data <- cv_data %>%
+  group_by(ID) %>%
+  summarize(obs = mean(obs, na.rm = T),
+            EX.pred = mean(EX.pred, na.rm = T),
+            )
 
 cv_plot <- ggplot(data = cv_data) +
   coord_equal() +
-  geom_point(aes(x = obs, y = EX.pred, color = as.factor(season))) +
+  #geom_point(aes(x = obs, y = EX.pred, color = as.factor(season))) +
+  geom_point(aes(x = obs, y = EX.pred)) +
   geom_abline(slope = 1, intercept = 0, linetype = 2, color = "grey50") +
-  scale_color_viridis(name = "Season", discrete = T,
-                      labels = c("1" = "Winter", "2" = "Spring",
-                                 "3" = "Summer", "4" = "Fall")) +
+  # scale_color_viridis(name = "Season", discrete = T,
+  #                     labels = c("1" = "Winter", "2" = "Spring",
+  #                                "3" = "Summer", "4" = "Fall")) +
   xlab("BC Observations (\u03BCg/m\u00B3)") + ylab("BC Predictions (\u03BCg/m\u00B3)") +
   xlim(c(0.7, 2.5)) + ylim(c(0.7, 2.5)) +
   simple_theme +
@@ -603,10 +612,10 @@ cv_plot
 
 lta_plot <- ggplot(data = lta_data) +
   coord_fixed() +
-  geom_pointrange(aes(x = obs, y = EX.pred, 
-                      ymin = EX.pred - (1.96*sqrt(VX.pred)),
-                      ymax = EX.pred + (1.96*sqrt(VX.pred))),
-                  color = "grey50") +
+  # geom_pointrange(aes(x = obs, y = EX.pred, 
+  #                     ymin = EX.pred - (1.96*sqrt(VX.pred)),
+  #                     ymax = EX.pred + (1.96*sqrt(VX.pred))),
+  #                 color = "grey50") +
   geom_point(aes(x = obs, y = EX.pred)) +
   geom_abline(slope = 1, intercept = 0, linetype = 2, color = "grey50") +
   xlab("BC Observations (\u03BCg/m\u00B3)") + ylab("BC Predictions (\u03BCg/m\u00B3)") +
@@ -823,7 +832,7 @@ highways <- read_csv(here::here("Data", "Highways_AEA.csv")) %>%
 highways_crop <- st_crop(highways, st_bbox(grid_sf_lta))
 
 lta_map <- ggplot() +
-  geom_sf(data = grid_sf_lta, aes(fill = EX), color = NA, show.legend = F) +
+  geom_sf(data = grid_sf_lta, aes(fill = EX), color = "transparent", show.legend = F) +
   geom_sf(data = highways_crop, color = "white", size = 0.5, show.legend = F) +
   scale_fill_viridis(name = "2018 mean\n BC (\u03BCg/m\u00B3)",
                      breaks = waiver(), n.breaks = 6) +
@@ -925,3 +934,601 @@ upas_map <- ggmap(base_map) +
 upas_map
 ggsave(file = here::here("Figs", "Locations_Map_For_GA.jpeg"),
        device = "jpeg", units = "in", height = 5, width = 5, dpi = 500)
+
+#' -----------------------------------------------------------------------------
+#' Figure S1-S3: Time Series for BC, NO2, and PM2.5 monitoring data
+#' -----------------------------------------------------------------------------
+
+#' NO2 concentrations
+no2_data <- read_csv(here::here("Data", "Monitor_NO2_Data_AEA.csv")) %>% 
+  filter(!is.na(Arithmetic_Mean)) %>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
+  filter(County_Code %in% counties) %>% 
+  arrange(Date_Local, monitor_id) %>%
+  mutate(Arithmetic_Mean = ifelse(Arithmetic_Mean <= 0, NA, Arithmetic_Mean))
+head(no2_data$Date_Local)
+tail(no2_data$Date_Local)
+
+#' Drop monitor 080590006 because it was installed too recently and there isn't a long-term record
+no2_data <- filter(no2_data, monitor_id != "080590006")
+length(unique(no2_data$monitor_id))
+
+no2_ts2 <- ggplot(data = no2_data, aes(x = Date_Local, y = log(Arithmetic_Mean))) +
+  geom_line() +
+  #geom_point(shape = 20, size = 0.5) +
+  #geom_smooth(se = F, color = "black", method = "gam") +
+  scale_color_viridis(name = "Monitor ID", discrete = T) +
+  scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
+  facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  xlab("Date") + ylab("log(NO\u2082)") +
+  simple_theme +
+  theme(text=element_text(family="Helvetica"))
+no2_ts2
+ggsave(here::here("Figs", "SI_Fig_NO2_Time_Series.jpeg"),
+       device = "jpeg", units = "in", height = 6, width = 8, dpi = 500)
+
+#' BC
+bc_cent_data <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv")) %>% 
+  filter(!is.na(Arithmetic_Mean)) %>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
+  filter(County_Code %in% counties) %>% 
+  arrange(Date_Local, monitor_id) %>%
+  mutate(Arithmetic_Mean = ifelse(Arithmetic_Mean <= 0.005, NA, Arithmetic_Mean))
+head(bc_cent_data$Date_Local)
+tail(bc_cent_data$Date_Local)
+
+#' Add an identifier to differentiate these measurements from collocated pollutants at the same site
+bc_cent_data$monitor_id <- paste0(bc_cent_data$monitor_id, "_bc")
+unique(bc_cent_data$monitor_id)
+
+bc_ts2 <- ggplot(data = bc_cent_data, aes(x = Date_Local, y = log(Arithmetic_Mean))) +
+  geom_line() +
+  #geom_point(aes(color = as.factor(monitor_id)), shape = 20, size = 1) +
+  #geom_smooth(se = F, color = "black") +
+  scale_color_viridis(name = "Monitor ID", discrete = T) +
+  scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
+  #facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  xlab("Date") + ylab("log(BC)") +
+  simple_theme +
+  theme(text=element_text(family="Helvetica"))
+bc_ts2
+ggsave(here::here("Figs", "SI_Fig_BC_Time_Series.jpeg"),
+       device = "jpeg", units = "in", height = 3, width = 4, dpi = 500)
+
+#' PM Measurements
+pm_data <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv")) %>% 
+  filter(!is.na(Arithmetic_Mean)) %>% 
+  st_as_sf(wkt = "WKT", crs = albers) %>% 
+  mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
+  filter(County_Code %in% counties) %>% 
+  filter(Sample_Duration != "1 HOUR") %>% 
+  arrange(Date_Local, monitor_id)
+head(pm_data$Date_Local)
+tail(pm_data$Date_Local)
+
+#' Exclude monitors with really short-term records
+pm_data <- filter(pm_data, monitor_id != '080310013')
+length(unique(pm_data$monitor_id))
+
+#' Add an identifier to differentiate these measurements from collocated pollutants at the same site
+pm_data$monitor_id <- paste0(pm_data$monitor_id, "_pm")
+unique(pm_data$monitor_id)
+
+# Log-transformed PM2.5
+pm_ts2 <- ggplot(data = pm_data, aes(x = Date_Local, y = log(Arithmetic_Mean))) +
+  geom_line() +
+  #geom_point(aes(color = as.factor(monitor_id)), shape = 20, size = 1) +
+  #geom_smooth(se = F, color = "black", method = "gam") +
+  scale_color_viridis(name = "Monitor ID", discrete = T) +
+  scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
+  facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  xlab("Date") + ylab("log(PM\u2082.\u2085)") +
+  simple_theme +
+  theme(text=element_text(family="Helvetica"))
+pm_ts2
+ggsave(here::here("Figs", "SI_Fig_PM2.5_Time_Series.jpeg"),
+       device = "jpeg", units = "in", height = 9, width = 8, dpi = 500)
+
+#' -----------------------------------------------------------------------------
+#' Figure S4: Fitted trends at each UPAS site
+#' -----------------------------------------------------------------------------
+
+library(SpatioTemporal)
+library(numDeriv)
+library(Matrix)
+library(plotrix)
+library(maps)
+
+load(here::here("Results", "Denver_ST_Model_B.rdata"))
+names(denver.data.B)
+as.numeric(unique(gsub("d_", "", denver.data.B$obs$ID))[-1])
+
+trend_df <- as.data.frame(denver.data.B$trend)
+site_df <- as.data.frame(denver.data.B$obs)
+
+#' Groups of 10
+jpeg(here::here("Figs", "S6_A_Basis_Function_Plot_Dist1-8.jpg"), 
+     width = 8, height = 12, units = "in", res = 500)
+
+layout(matrix(c(1,2,3,4,5,6,7,8,9,10), 10, 1, byrow = TRUE),
+       heights = c(1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5))
+par(mar = c(2, 2, 2, 2), oma=c(2, 2, 2, 2))
+
+#' Obs at the distirbuted Site
+plot(denver.data.B, "obs", ID="d_1", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 1"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_2", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 2"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_3", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 3"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_4", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 4"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_5", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 5"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_6", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 6"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_7", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 7"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_8", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 8"), adj = 0)
+
+# plot(denver.data.B, "obs", ID="d_", xlab = "", 
+#      ylab="", main = "") 
+# title(expression("Distributed Site No. "), adj = 0)
+# 
+# plot(denver.data.B, "obs", ID="d_", xlab = "", 
+#      ylab="", main = "") 
+# title(expression("Distributed Site No. "), adj = 0)
+
+mtext(expression("Standarized (unitless) BC concentration"), side=2, line=0,
+      outer=TRUE, cex=1, las=0)
+dev.off()
+par(mfrow=c(1,1))
+
+jpeg(here::here("Figs", "S6_B_Basis_Function_Plot_Dist10-19.jpg"), 
+     width = 8, height = 12, units = "in", res = 500)
+
+layout(matrix(c(1,2,3,4,5,6,7,8,9,10), 10, 1, byrow = TRUE),
+       heights = c(1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5))
+par(mar = c(2, 2, 2, 2), oma=c(2, 2, 2, 2))
+
+#' Obs at the distirbuted Site
+plot(denver.data.B, "obs", ID="d_10", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 10"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_11", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 11"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_12", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 12"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_13", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 13"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_14", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 14"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_15", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 15"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_16", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 16"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_17", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 17"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_18", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 18"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_19", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 19"), adj = 0)
+
+mtext(expression("Standarized (unitless) BC concentration"), side=2, line=0,
+      outer=TRUE, cex=1, las=0)
+dev.off()
+par(mfrow=c(1,1))
+
+jpeg(here::here("Figs", "S6_C_Basis_Function_Plot_Dist20-29.jpg"), 
+     width = 8, height = 12, units = "in", res = 500)
+
+layout(matrix(c(1,2,3,4,5,6,7,8,9,10), 10, 1, byrow = TRUE),
+       heights = c(1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5))
+par(mar = c(2, 2, 2, 2), oma=c(2, 2, 2, 2))
+
+#' Obs at the distirbuted Site
+plot(denver.data.B, "obs", ID="d_20", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 20"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_22", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 22"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_22", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 22"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_23", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 23"), adj = 0)
+
+# plot(denver.data.B, "obs", ID="d_24", xlab = "", 
+#      ylab="", main = "") 
+# title(expression("Distributed Site No. 24"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_25", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 25"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_26", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 26"), adj = 0)
+
+# plot(denver.data.B, "obs", ID="d_27", xlab = "", 
+#      ylab="", main = "") 
+# title(expression("Distributed Site No. 27"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_28", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 28"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_29", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 29"), adj = 0)
+
+mtext(expression("Standarized (unitless) BC concentration"), side=2, line=0,
+      outer=TRUE, cex=1, las=0)
+dev.off()
+par(mfrow=c(1,1))
+
+jpeg(here::here("Figs", "S6_D_Basis_Function_Plot_Dist30-39.jpg"), 
+     width = 8, height = 12, units = "in", res = 500)
+
+layout(matrix(c(1,2,3,4,5,6,7,8,9,10), 10, 1, byrow = TRUE),
+       heights = c(1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5))
+par(mar = c(2, 2, 2, 2), oma=c(2, 2, 2, 2))
+
+#' Obs at the distirbuted Site
+# plot(denver.data.B, "obs", ID="d_30", xlab = "", 
+#      ylab="", main = "") 
+# title(expression("Distributed Site No. 30"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_33", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 33"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_33", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 33"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_33", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 33"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_34", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 34"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_35", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 35"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_36", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 36"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_37", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 37"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_38", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 38"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_39", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 39"), adj = 0)
+
+mtext(expression("Standarized (unitless) BC concentration"), side=2, line=0,
+      outer=TRUE, cex=1, las=0)
+dev.off()
+par(mfrow=c(1,1))
+
+jpeg(here::here("Figs", "S6_E_Basis_Function_Plot_Dist40-49.jpg"), 
+     width = 8, height = 12, units = "in", res = 500)
+
+layout(matrix(c(1,2,3,4,5,6,7,8,9,10), 10, 1, byrow = TRUE),
+       heights = c(1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5))
+par(mar = c(2, 2, 2, 2), oma=c(2, 2, 2, 2))
+
+#' Obs at the distributed Site
+plot(denver.data.B, "obs", ID="d_40", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 40"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_44", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 44"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_44", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 44"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_44", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 44"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_44", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 44"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_45", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 45"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_46", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 46"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_47", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 47"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_48", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 48"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_49", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 49"), adj = 0)
+
+mtext(expression("Standarized (unitless) BC concentration"), side=2, line=0,
+      outer=TRUE, cex=1, las=0)
+dev.off()
+par(mfrow=c(1,1))
+
+jpeg(here::here("Figs", "S6_F_Basis_Function_Plot_Dist50-59.jpg"), 
+     width = 8, height = 12, units = "in", res = 500)
+
+layout(matrix(c(1,2,3,4,5,6,7,8,9,10), 10, 1, byrow = TRUE),
+       heights = c(1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5))
+par(mar = c(2, 2, 2, 2), oma=c(2, 2, 2, 2))
+
+#' Obs at the distributed Site
+plot(denver.data.B, "obs", ID="d_50", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 50"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_55", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 55"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_55", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 55"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_55", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 55"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_54", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 54"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_55", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 55"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_56", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 56"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_57", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 57"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_58", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 58"), adj = 0)
+
+# plot(denver.data.B, "obs", ID="d_59", xlab = "",
+#      ylab="", main = "")
+# title(expression("Distributed Site No. 59"), adj = 0)
+
+mtext(expression("Standarized (unitless) BC concentration"), side=2, line=0,
+      outer=TRUE, cex=1, las=0)
+dev.off()
+par(mfrow=c(1,1))
+
+jpeg(here::here("Figs", "S6_G_Basis_Function_Plot_Dist60-69.jpg"), 
+     width = 8, height = 12, units = "in", res = 500)
+
+layout(matrix(c(1,2,3,4,5,6,7,8,9,10), 10, 1, byrow = TRUE),
+       heights = c(1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5))
+par(mar = c(2, 2, 2, 2), oma=c(2, 2, 2, 2))
+
+#' Obs at the distributed Site
+plot(denver.data.B, "obs", ID="d_60", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 60"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_66", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 66"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_66", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 66"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_66", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 66"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_64", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 64"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_66", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 66"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_66", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 66"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_67", xlab = "",
+     ylab="", main = "")
+title(expression("Distributed Site No. 67"), adj = 0)
+
+plot(denver.data.B, "obs", ID="d_68", xlab = "", 
+     ylab="", main = "") 
+title(expression("Distributed Site No. 68"), adj = 0)
+
+# plot(denver.data.B, "obs", ID="d_69", xlab = "",
+#      ylab="", main = "")
+# title(expression("Distributed Site No. 69"), adj = 0)
+
+mtext(expression("Standarized (unitless) BC concentration"), side=2, line=0,
+      outer=TRUE, cex=1, las=0)
+dev.off()
+par(mfrow=c(1,1))
+
+#' -----------------------------------------------------------------------------
+#' Trend plots for monitors
+
+library(SpatioTemporal)
+library(numDeriv)
+library(Matrix)
+library(plotrix)
+library(maps)
+
+load(here::here("Results", "Denver_ST_Monitors.rdata"))
+names(pol_STdata2)
+
+trend_df <- as.data.frame(pol_STdata2$trend)
+site_df <- as.data.frame(pol_STdata2$obs) 
+
+pm_site_df <- filter(site_df, str_detect(ID, "_pm"))
+pm_site_df$ID <- gsub("_pm", "", pm_site_df$ID)
+
+no2_site_df <- filter(site_df, str_detect(ID, "_no2"))
+no2_site_df$ID <- gsub("_no2", "", no2_site_df$ID)
+
+jpeg(here::here("Figs", "S4_Basis_Function_Plot_PM.jpg"), 
+     width = 8, height = 12, units = "in", res = 500)
+
+layout(matrix(c(1,2,3,4,5,6,7,8,9,10), 10, 1, byrow = TRUE),
+       heights = c(1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5))
+par(mar = c(2, 2, 2, 2), oma=c(2, 2, 2, 2))
+
+#' Obs at the central sites
+plot(pol_STdata2, "obs", ID="080010006_pm", xlab = "", 
+     ylab="", main = "") 
+title(expression("PM"[2.5]*" Monitor: 080010006"), adj = 0)
+
+plot(pol_STdata2, "obs", ID="080010008_pm", xlab = "", 
+     ylab="", main = "") 
+title(expression("PM"[2.5]*" Monitor: 080010008"), adj = 0)
+
+plot(pol_STdata2, "obs", ID="080050005_pm", xlab = "", 
+     ylab="", main = "") 
+title(expression("PM"[2.5]*" Monitor: 080050005"), adj = 0)
+
+plot(pol_STdata2, "obs", ID="080130003_pm", xlab = "", 
+     ylab="", main = "") 
+title(expression("PM"[2.5]*" Monitor: 080130003"), adj = 0)
+
+plot(pol_STdata2, "obs", ID="080130012_pm", xlab = "", 
+     ylab="", main = "") 
+title(expression("PM"[2.5]*" Monitor: 080130012"), adj = 0)
+
+plot(pol_STdata2, "obs", ID="080310002_pm", xlab = "", 
+     ylab="", main = "") 
+title(expression("PM"[2.5]*" Monitor: 080310002"), adj = 0)
+
+plot(pol_STdata2, "obs", ID="080310023_pm", xlab = "", 
+     ylab="", main = "") 
+title(expression("PM"[2.5]*" Monitor: 080310023"), adj = 0)
+
+plot(pol_STdata2, "obs", ID="080310025_pm", xlab = "", 
+     ylab="", main = "") 
+title(expression("PM"[2.5]*" Monitor: 080310025"), adj = 0)
+
+plot(pol_STdata2, "obs", ID="080310026_pm", xlab = "", 
+     ylab="", main = "") 
+title(expression("PM"[2.5]*" Monitor: 080310026"), adj = 0)
+
+plot(pol_STdata2, "obs", ID="080310027_pm", xlab = "", 
+     ylab="", main = "") 
+title(expression("PM"[2.5]*" Monitor: 080310027"), adj = 0)
+
+mtext(expression("Standarized (unitless) PM"[2.5]*" concentration"), side=2, line=0,
+      outer=TRUE, cex=1, las=0)
+
+dev.off()
+par(mfrow=c(1,1))
+
+jpeg(here::here("Figs", "S5_Basis_Function_Plot_NO2.jpg"), 
+     width = 8, height = 8, units = "in", res = 500)
+
+layout(matrix(c(1,2,3,4,5), 5, 1, byrow = TRUE),
+       heights = c(1.5, 1.5, 1.5, 1.5, 1.5))
+par(mar = c(2, 2, 2, 2), oma=c(2, 2, 2, 2))
+
+#' Obs at the central sites
+plot(pol_STdata2, "obs", ID="080013001_no2", xlab = "", 
+     ylab="", main = "") 
+title(expression("NO"[2]*" Monitor: 080130001"), adj = 0)
+
+plot(pol_STdata2, "obs", ID="080310002_no2", xlab = "", 
+     ylab="", main = "") 
+title(expression("NO"[2]*" Monitor: 080310002"), adj = 0)
+
+plot(pol_STdata2, "obs", ID="080310026_no2", xlab = "", 
+     ylab="", main = "") 
+title(expression("NO"[2]*" Monitor: 080310026"), adj = 0)
+
+plot(pol_STdata2, "obs", ID="080310027_no2", xlab = "", 
+     ylab="", main = "") 
+title(expression("NO"[2]*" Monitor: 080310027"), adj = 0)
+
+plot(pol_STdata2, "obs", ID="080310028_no2", xlab = "", 
+     ylab="", main = "") 
+title(expression("NO"[2]*" Monitor: 080310028"), adj = 0)
+
+mtext(expression("Standarized (unitless) NO"[2]*" concentration"), side=2, line=0,
+      outer=TRUE, cex=1, las=0)
+
+dev.off()
+par(mfrow=c(1,1))
+

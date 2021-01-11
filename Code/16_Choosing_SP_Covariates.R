@@ -70,28 +70,13 @@ ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
 #' Aggregate to the "annual" level at each location (using lon/lat as the ID)
 #' -----------------------------------------------------------------------------
 
-data_name <- "Combined_Filter_Data_AEA.csv"
-all_data <- read_csv(here::here("Data", data_name))
-
-#' Select a "calibrated" version of the data
-#' For now, go with Deming regression-- accounts for variability in the
-#' monitor and the UPAS data and the temporal mismatch in TWAs
-all_data$bc_ug_m3 <- all_data$bc_ug_m3_dem
-all_data$pm_ug_m3 <- all_data$pm_ug_m3_dem
-
-#' List of IDs to pass preliminary screening (see 15_Exploring_BC_Data.R)
-inc_filters <- read_csv(here::here("Data/Final_Campaign_Sites_and_Filters.csv"))
-
-dist_data <- filter(all_data, filter_id != "080310027") %>%
-  filter(filter_id %in% inc_filters$filter_id) %>%
-  filter(sample_week == st_week) 
-head(dist_data$sample_week)
-tail(dist_data$sample_week)
+dist_data <- read_csv(here::here("Data", "Final_Filters_for_ST_Model.csv"))
 
 sites_by_camp <- select(dist_data, site_id, campaign) %>%
   group_by(site_id, campaign) %>%
   summarize(n_filters = n()) %>%
   pivot_wider(names_from = campaign, values_from = n_filters) 
+sites_by_camp
 
 sites_by_camp2 <- sites_by_camp %>%
   mutate(Campaign1 = ifelse(is.na(Campaign1), 0, 1),
@@ -100,28 +85,14 @@ sites_by_camp2 <- sites_by_camp %>%
          Campaign4 = ifelse(is.na(Campaign4), 0, 1),
          Campaign5 = ifelse(is.na(Campaign5), 0, 1)) %>%
   mutate(n_campaigns = Campaign1 + Campaign2 + Campaign3 + Campaign4 + Campaign5)
-  
-#' All of the dropped data should be in Campaign 4
-dropped_data <- filter(all_data, filter_id != "080310027") %>%
-  filter(!(filter_id %in% inc_filters$filter_id)) %>%
-  filter(st_week == sample_week) %>%
-  filter(indoor == 0) %>%
-  filter(is_blank == 0) %>% 
-  #' QA filters
-  filter(bc_below_lod == 0) %>% 
-  filter(negative_pm_mass == 0) %>% 
-  filter(potential_contamination == 0)
-
-central_data <- filter(all_data, filter_id == "080310027") %>%
-  filter(!is.na(bc_ug_m3))
-head(central_data$sample_week)
-tail(central_data$sample_week)
+sites_by_camp2
 
 #' Study-wide data for each sampling location
 #' Not considering temperature or wildfire smoke right now
 names(dist_data)
 site_sp <- select(dist_data, site_id, 
-                  elevation_50:impervious_2500,open_50:aadt_2500) %>% 
+                  elevation_50:impervious_2500,
+                  open_50:aadt_2500) %>% 
   distinct()
 
 site_bc <- select(dist_data, site_id, bc_ug_m3) %>%
@@ -130,7 +101,7 @@ site_bc <- select(dist_data, site_id, bc_ug_m3) %>%
             bc_ug_m3 = mean(bc_ug_m3, na.rm = T))
 
 site_data <- left_join(site_bc, site_sp, by = "site_id") %>%
-  filter(n_filters > 5)
+  filter(n_filters > 4)
 glimpse(site_data)
 summary(site_data$bc_ug_m3)
 length(unique(site_data$bc_ug_m3))
@@ -167,7 +138,7 @@ ggplot(site_data) +
 #' ----------------------------------------------------------------------------- 
 
 bc_lur_data <- site_data %>% 
-  select(site_id, bc_ug_m3, elevation_50:aadt_2500)
+  select(bc_ug_m3, elevation_50:aadt_2500)
 glimpse(bc_lur_data)
 summary(bc_lur_data)
 
@@ -183,7 +154,7 @@ summary(bc_lur_data)
 #' ----------------------------------------------------------------------------- 
 
 #' How many predictors are we starting with?
-#' 92
+#' 91
 ncol(select(bc_lur_data, -c(bc_ug_m3)))
 
 #' Looking at the continuous predictors now
@@ -229,29 +200,57 @@ bc_cor_flat
 
 bc_cor_flat_check <- filter(bc_cor_flat, abs(cor) > 0.95)
 bc_cor_drop <- unique(bc_cor_flat_check$row)
-bc_cor_drop <- bc_cor_drop[c(1:9,14,16:20)]
+bc_cor_drop
+bc_cor_drop <- bc_cor_drop[c(1:6,10:12,15,17:19,21)]
 
-drop_vars2 <- c(drop_vars2, bc_cor_drop)
+drop_vars2 <- c(drop_vars2, bc_cor_drop) 
+drop_vars2 <- unique(drop_vars2)
+drop_vars2
+
+#' Drop any variable where the median is 0
+# med_check <- bc_lur_data %>%
+#   dplyr::select(-bc_ug_m3, -site_id) %>%
+#   summarize_all(median) %>%
+#   pivot_longer(cols = 1:ncol(.), names_to = "variable", values_to = "median")
+# med_drop <- filter(med_check, median == 0)
+# med_drop$variable
+# 
+# drop_vars2 <- c(drop_vars2, med_drop$variable)
+drop_vars2 <- unique(drop_vars2)
 drop_vars2
 
 #' Now how many predictors do we have?
 #' 76 candidate predictors
 bc_lur_data2 <- bc_lur_data %>%
-  select(-c(drop_vars2))
+  select(-(all_of(drop_vars2)))
 names(bc_lur_data2)
 
 ncol(select(bc_lur_data2, -bc_ug_m3))
 summary(bc_lur_data2)
 
+bc_lur_data2a <- bc_lur_data2
+
+#' #' log-transform the continuous predictors
+# bc_lur_data2_vars <- dplyr::select(bc_lur_data2, -c(1:2))
+# bc_lur_data2_vars <- as.matrix(bc_lur_data2_vars)
+# summary(bc_lur_data2_vars)
+# bc_lur_data2_vars <- bc_lur_data2_vars + 0.01
+# summary(bc_lur_data2_vars)
+# bc_lur_data2_vars <- apply(bc_lur_data2_vars, 2, log)
+# summary(bc_lur_data2_vars)
+# 
+# bc_lur_data2a <- bind_cols(dplyr::select(bc_lur_data2, site_id, bc_ug_m3),
+#                            as.data.frame(bc_lur_data2_vars))
+summary(bc_lur_data2a)
+
 #' Scale all of the continuous predictors
-bc_lur_data2a <- bc_lur_data2 %>% 
-  mutate_at(.vars = vars(tree_cover_100:aadt_2500),
-            scale)
+bc_lur_data2a <- bc_lur_data2a %>% 
+  mutate_at(.vars = -c(1:2), scale)
 summary(bc_lur_data2a)
 
 #' Fit some linear regression models
 #' Just AADT
-bc_lm1 <- lm(log(bc_ug_m3) ~ aadt_1000, data = bc_lur_data2)
+bc_lm1 <- lm(log(bc_ug_m3) ~ aadt_1000, data = bc_lur_data2a)
 summary(bc_lm1)
 par(mfrow=c(2,2)) 
 plot(bc_lm1, main = "Just AADT within 1000 m: log-transformed outcome")
@@ -259,12 +258,15 @@ par(mfrow=c(1,1))
 hist(bc_lm1$residuals)
 
 #' AADT + tree cover
-bc_lm2 <- lm(log(bc_ug_m3) ~ aadt_1000 + tree_cover_1000, data = bc_lur_data2)
+bc_lm2 <- lm(log(bc_ug_m3) ~ aadt_1000 + tree_cover_1000, data = bc_lur_data2a)
 summary(bc_lm2)
 par(mfrow=c(2,2)) 
 plot(bc_lm2, main = "AADT (1000 m) and Tree Cover (1000 m): log-transformed outcome")
 par(mfrow=c(1,1))
 hist(bc_lm2$residuals)
+
+summary(bc_lur_data2a$aadt_1000)
+summary(bc_lur_data2a$tree_cover_1000)
 
 #' -----------------------------------------------------------------------------
 #' -----------------------------------------------------------------------------
@@ -278,10 +280,10 @@ hist(bc_lm2$residuals)
 library(caret)
 set.seed(10000)
 
-start_predictors <- colnames(bc_lur_data2)[which(!(colnames(bc_lur_data2) %in% 
+start_predictors <- colnames(bc_lur_data2a)[which(!(colnames(bc_lur_data2a) %in% 
                                                      c("bc_ug_m3", "site_id")))]
 
-bc_lur_data4 <- select(bc_lur_data, bc_ug_m3, all_of(start_predictors))
+bc_lur_data4 <- dplyr::select(bc_lur_data2a, bc_ug_m3, all_of(start_predictors))
 
 lambda <- 10^seq(-3, 3, length = 100)
 tc_l = trainControl("cv", number = 10)
@@ -315,31 +317,46 @@ log_bc_lasso3 <- train(log(bc_ug_m3) ~ ., data = bc_lur_data4,
 log_bc_lasso3$resample
 plot(log_bc_lasso3)
 
-#' Narrowing it just one more time
-lambda4 <- 10^seq(-2.25, -1.25, length = 100)
-tc_l = trainControl("cv", number = 10)
-tg_l4 = expand.grid(alpha = 1, lambda = lambda4)
-
-log_bc_lasso4 <- train(log(bc_ug_m3) ~ ., data = bc_lur_data4,
-                       method = "glmnet", trControl = tc_l, tuneGrid = tg_l4)
-
-log_bc_lasso4$resample
-plot(log_bc_lasso4)
+log_bc_lasso_coef3 <- coef(log_bc_lasso3$finalModel, log_bc_lasso3$bestTune$lambda) 
+log_bc_lasso_coef3
 
 #' the lambda3 sequence looks good
-getTrainPerf(log_bc_lasso4)
-plot(log_bc_lasso4$finalModel)
-arrange(log_bc_lasso4$results, RMSE) %>% head
-log_bc_lasso4$bestTune
-log_bc_lasso_coef4 <- coef(log_bc_lasso4$finalModel, log_bc_lasso4$bestTune$lambda)
-log_bc_lasso_coef4
+getTrainPerf(log_bc_lasso3)
+plot(log_bc_lasso3$finalModel)
+arrange(log_bc_lasso3$results, RMSE) %>% head
+log_bc_lasso3$bestTune
+log_bc_lasso_coef3 <- coef(log_bc_lasso3$finalModel, log_bc_lasso3$bestTune$lambda)
+log_bc_lasso_coef3
 
-varImp(log_bc_lasso4)
+varImp(log_bc_lasso3)
+
+#' Linear model with the LASSO predictors
+lasso_coef_df <- data.frame(name = log_bc_lasso_coef3@Dimnames[[1]][log_bc_lasso_coef3@i + 1],
+                            coefficient = log_bc_lasso_coef3@x)
+covars <- as.character(lasso_coef_df$name[-1])
+covars 
+
+lasso_lm_df <- select(bc_lur_data4, bc_ug_m3, all_of(covars))
+summary(lasso_lm_df)
+
+lasso_lm_model <- lm(log(bc_ug_m3) ~ ., data = lasso_lm_df)
+summary(lasso_lm_model)
+
+par(mfrow=c(2,2)) 
+plot(lasso_lm_model, main = "LM with LASSO Predictors")
+par(mfrow=c(1,1))
+hist(lasso_lm_model$residuals)
 
 #' -----------------------------------------------------------------------------
 #' Save LASSO model
 #' -----------------------------------------------------------------------------
 
-save(log_bc_lasso4, log_bc_lasso_coef4, 
+save(log_bc_lasso3, log_bc_lasso_coef3, 
      file = here::here("Results", "BC_LASSO_Model_5C.Rdata"))
 
+library(caret)
+load(here::here("Results", "BC_LASSO_Model_5C.Rdata"))
+getTrainPerf(log_bc_lasso3)
+plot(log_bc_lasso3$finalModel)
+arrange(log_bc_lasso3$results, RMSE) %>% head
+log_bc_lasso3$bestTune
