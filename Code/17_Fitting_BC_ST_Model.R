@@ -870,8 +870,8 @@ save(denver.data.A, denver.model.A, est.denver.model.A, est.denver.A.cv,
 
 #' Prediction using the CV model
 #' Making predictions using the CV model. Printing out the CV summary statistics as well
-pred.A.cv <- predictCV(denver.model.A, est.denver.A.cv)#, LTA = T)
-pred.A.cv.log <- predictCV(denver.model.A, est.denver.A.cv,# LTA = T,
+pred.A.cv <- predictCV(denver.model.A, est.denver.A.cv, LTA = T)
+pred.A.cv.log <- predictCV(denver.model.A, est.denver.A.cv, LTA = T,
                            transform="unbiased")
 
 head(pred.A.cv$pred.all$EX)
@@ -894,19 +894,19 @@ with(pred.A.cv.log$pred.LTA, plotCI(obs, EX.pred, uiw=1.96*sqrt(VX.pred),
                                     main="Temporal average BC (ug/m3)"))
 abline(0, 1, col="grey")
 
-# jpeg(filename = here::here("Figs", "ST_CV_Obs_vs_Pred_BC_ModA.jpeg"),
-#      width = 8, height = 4, units = "in", res = 500)
-# par(mfrow=c(1,2), mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
-# plot(pred.A.cv, "obs", ID="all", pch=c(19,NA), cex=.25, lty=c(NA,2),
-#      col=c("ID", "black", "grey"),
-#      ylim=c(-1,2),
-#      xlab="Observations", ylab="Predictions",
-#      main="Cross-validation BC (log ug/m3)")
-# with(pred.A.cv.log$pred.LTA, plotCI(obs, EX.pred, uiw=1.96*sqrt(VX.pred),
-#                                       xlab="Observations", ylab="Predictions",
-#                                       main="Temporal average BC (ug/m3)"))
-# abline(0, 1, col="grey")
-# dev.off()
+jpeg(filename = here::here("Figs", "ST_CV_Obs_vs_Pred_BC_ModA.jpeg"),
+     width = 8, height = 4, units = "in", res = 500)
+par(mfrow=c(1,2), mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+plot(pred.A.cv, "obs", ID="all", pch=c(19,NA), cex=.25, lty=c(NA,2),
+     col=c("ID", "black", "grey"),
+     ylim=c(-1,2),
+     xlab="Observations", ylab="Predictions",
+     main="Cross-validation BC (log ug/m3)")
+with(pred.A.cv.log$pred.LTA, plotCI(obs, EX.pred, uiw=1.96*sqrt(VX.pred),
+                                      xlab="Observations", ylab="Predictions",
+                                      main="Temporal average BC (ug/m3)"))
+abline(0, 1, col="grey")
+dev.off()
 
 #' Predictions for 2009-2019
 #' What do the long-term predictions look like for this model?
@@ -1057,8 +1057,8 @@ save(denver.data.B, denver.model.B, est.denver.model.B, est.denver.B.cv,
 #' Prediction using the CV model
 #' Making predictions using the CV model. Printing out the CV summary statistics as well
 
-pred.B.cv <- predictCV(denver.model.B, est.denver.B.cv)#, LTA = T)
-pred.B.cv.log <- predictCV(denver.model.B, est.denver.B.cv, #LTA = T, 
+pred.B.cv <- predictCV(denver.model.B, est.denver.B.cv, LTA = T)
+pred.B.cv.log <- predictCV(denver.model.B, est.denver.B.cv, LTA = T, 
                            transform="unbiased")
 
 head(pred.B.cv$pred.all$EX)
@@ -1076,24 +1076,24 @@ plot(pred.B.cv, "obs", ID="all", pch=c(19,NA), cex=.25, lty=c(NA,2),
      ylim=c(-1,2),
      xlab="Observations", ylab="Predictions",
      main="Cross-validation BC (log ug/m3)")
-# with(pred.B.cv.log$pred.LTA, plotCI(obs, EX.pred, uiw=1.96*sqrt(VX.pred),
-#                                     xlab="Observations", ylab="Predictions",
-#                                     main="Temporal average BC (ug/m3)"))
+with(pred.B.cv.log$pred.LTA, plotCI(obs, EX.pred, uiw=1.96*sqrt(VX.pred),
+                                    xlab="Observations", ylab="Predictions",
+                                    main="Temporal average BC (ug/m3)"))
 abline(0, 1, col="grey")
 
-# jpeg(filename = here::here("Figs", "ST_CV_Obs_vs_Pred_BC_ModB.jpeg"),
-#      width = 8, height = 4, units = "in", res = 500)
-# par(mfrow=c(1,2), mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
-# plot(pred.B.cv, "obs", ID="all", pch=c(19,NA), cex=.25, lty=c(NA,2),
-#      col=c("ID", "black", "grey"),
-#      ylim=c(-1,2),
-#      xlab="Observations", ylab="Predictions",
-#      main="Cross-validation BC (log ug/m3)")
-# with(pred.B.cv.log$pred.LTA, plotCI(obs, EX.pred, uiw=1.96*sqrt(VX.pred),
-#                                       xlab="Observations", ylab="Predictions",
-#                                       main="Temporal average BC (ug/m3)"))
-# abline(0, 1, col="grey")
-# dev.off()
+jpeg(filename = here::here("Figs", "ST_CV_Obs_vs_Pred_BC_ModB.jpeg"),
+     width = 8, height = 4, units = "in", res = 500)
+par(mfrow=c(1,2), mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+plot(pred.B.cv, "obs", ID="all", pch=c(19,NA), cex=.25, lty=c(NA,2),
+     col=c("ID", "black", "grey"),
+     ylim=c(-1,2),
+     xlab="Observations", ylab="Predictions",
+     main="Cross-validation BC (log ug/m3)")
+with(pred.B.cv.log$pred.LTA, plotCI(obs, EX.pred, uiw=1.96*sqrt(VX.pred),
+                                      xlab="Observations", ylab="Predictions",
+                                      main="Temporal average BC (ug/m3)"))
+abline(0, 1, col="grey")
+dev.off()
 
 #' Predictions for 2009-2020
 #' What do the long-term predictions look like for this model?
@@ -1153,15 +1153,15 @@ sum_tab <- data.frame(model = c("Model A", "Model B"),
                                        ifelse(exists("est.denver.B.cv"),all(est.denver.B.cv$status$convergence), NA)),
                       cv_rmse_obs = c(ifelse(exists("pred.A.cv.log"), round(summary(pred.A.cv.log)$RMSE[1,3], 2), NA),
                                       ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$RMSE[1,3], 2), NA)),
-                      # cv_rmse_avg = c(ifelse(exists("pred.A.cv.log"), round(summary(pred.A.cv.log)$RMSE[2,3], 2), NA),
-                      #                 ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$RMSE[2,3], 2), NA)),
+                      cv_rmse_avg = c(ifelse(exists("pred.A.cv.log"), round(summary(pred.A.cv.log)$RMSE[2,3], 2), NA),
+                                      ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$RMSE[2,3], 2), NA)),
                       cv_r2_obs = c(ifelse(exists("pred.A.cv.log"), round(summary(pred.A.cv.log)$R2[1,3], 2), NA),
                                     ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$R2[1,3], 2), NA)),
-                      # cv_r2_avg = c(ifelse(exists("pred.A.cv.log"), round(summary(pred.A.cv.log)$R2[2,3], 2), NA),
-                      #               ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$R2[2,3], 2), NA)),
+                      cv_r2_avg = c(ifelse(exists("pred.A.cv.log"), round(summary(pred.A.cv.log)$R2[2,3], 2), NA),
+                                    ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$R2[2,3], 2), NA)),
                       cv_coverage_obs = c(ifelse(exists("pred.A.cv.log"), round(summary(pred.A.cv.log)$coverage[1,1], 2), NA),
-                                          ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$coverage[1,1], 2), NA)))
-                      # cv_coverage_avg = c(ifelse(exists("pred.A.cv.log"), round(summary(pred.A.cv.log)$coverage[2,1], 2), NA),
-                      #                     ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$coverage[2,1], 2), NA)))
+                                          ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$coverage[1,1], 2), NA)),
+                      cv_coverage_avg = c(ifelse(exists("pred.A.cv.log"), round(summary(pred.A.cv.log)$coverage[2,1], 2), NA),
+                                          ifelse(exists("pred.B.cv.log"), round(summary(pred.B.cv.log)$coverage[2,1], 2), NA)))
 
 print(as.data.frame(sum_tab))

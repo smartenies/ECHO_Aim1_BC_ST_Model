@@ -72,7 +72,7 @@ ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
 
 dist_data <- read_csv(here::here("Data", "Final_Filters_for_ST_Model.csv"))
 
-sites_by_camp <- select(dist_data, site_id, campaign) %>%
+sites_by_camp <- dplyr::select(dist_data, site_id, campaign) %>%
   group_by(site_id, campaign) %>%
   summarize(n_filters = n()) %>%
   pivot_wider(names_from = campaign, values_from = n_filters) 
@@ -90,12 +90,12 @@ sites_by_camp2
 #' Study-wide data for each sampling location
 #' Not considering temperature or wildfire smoke right now
 names(dist_data)
-site_sp <- select(dist_data, site_id, 
+site_sp <- dplyr::select(dist_data, site_id, 
                   elevation_50:impervious_2500,
                   open_50:aadt_2500) %>% 
   distinct()
 
-site_bc <- select(dist_data, site_id, bc_ug_m3) %>%
+site_bc <- dplyr::select(dist_data, site_id, bc_ug_m3) %>%
   group_by(site_id) %>% 
   summarize(n_filters = n(),
             bc_ug_m3 = mean(bc_ug_m3, na.rm = T))
@@ -138,7 +138,7 @@ ggplot(site_data) +
 #' ----------------------------------------------------------------------------- 
 
 bc_lur_data <- site_data %>% 
-  select(bc_ug_m3, elevation_50:aadt_2500)
+  dplyr::select(bc_ug_m3, elevation_50:aadt_2500)
 glimpse(bc_lur_data)
 summary(bc_lur_data)
 
@@ -155,11 +155,11 @@ summary(bc_lur_data)
 
 #' How many predictors are we starting with?
 #' 91
-ncol(select(bc_lur_data, -c(bc_ug_m3)))
+ncol(dplyr::select(bc_lur_data, -c(bc_ug_m3)))
 
 #' Looking at the continuous predictors now
 names(bc_lur_data)
-bc_continuous <- select(bc_lur_data, elevation_50:aadt_2500)
+bc_continuous <- dplyr::select(bc_lur_data, elevation_50:aadt_2500)
 
 #' Calculate CV and percent diff
 bc_continuous_cv <- gather(bc_continuous) %>% 
@@ -207,45 +207,25 @@ drop_vars2 <- c(drop_vars2, bc_cor_drop)
 drop_vars2 <- unique(drop_vars2)
 drop_vars2
 
-#' Drop any variable where the median is 0
-# med_check <- bc_lur_data %>%
-#   dplyr::select(-bc_ug_m3, -site_id) %>%
-#   summarize_all(median) %>%
-#   pivot_longer(cols = 1:ncol(.), names_to = "variable", values_to = "median")
-# med_drop <- filter(med_check, median == 0)
-# med_drop$variable
-# 
-# drop_vars2 <- c(drop_vars2, med_drop$variable)
 drop_vars2 <- unique(drop_vars2)
 drop_vars2
 
 #' Now how many predictors do we have?
 #' 76 candidate predictors
 bc_lur_data2 <- bc_lur_data %>%
-  select(-(all_of(drop_vars2)))
+  dplyr::select(-(all_of(drop_vars2)))
 names(bc_lur_data2)
 
-ncol(select(bc_lur_data2, -bc_ug_m3))
+ncol(dplyr::select(bc_lur_data2, -bc_ug_m3))
 summary(bc_lur_data2)
 
 bc_lur_data2a <- bc_lur_data2
 
-#' #' log-transform the continuous predictors
-# bc_lur_data2_vars <- dplyr::select(bc_lur_data2, -c(1:2))
-# bc_lur_data2_vars <- as.matrix(bc_lur_data2_vars)
-# summary(bc_lur_data2_vars)
-# bc_lur_data2_vars <- bc_lur_data2_vars + 0.01
-# summary(bc_lur_data2_vars)
-# bc_lur_data2_vars <- apply(bc_lur_data2_vars, 2, log)
-# summary(bc_lur_data2_vars)
-# 
-# bc_lur_data2a <- bind_cols(dplyr::select(bc_lur_data2, site_id, bc_ug_m3),
-#                            as.data.frame(bc_lur_data2_vars))
 summary(bc_lur_data2a)
 
 #' Scale all of the continuous predictors
 bc_lur_data2a <- bc_lur_data2a %>% 
-  mutate_at(.vars = -c(1:2), scale)
+  mutate_at(.vars = -c(1), scale)
 summary(bc_lur_data2a)
 
 #' Fit some linear regression models
@@ -336,7 +316,7 @@ lasso_coef_df <- data.frame(name = log_bc_lasso_coef3@Dimnames[[1]][log_bc_lasso
 covars <- as.character(lasso_coef_df$name[-1])
 covars 
 
-lasso_lm_df <- select(bc_lur_data4, bc_ug_m3, all_of(covars))
+lasso_lm_df <- dplyr::select(bc_lur_data4, bc_ug_m3, all_of(covars))
 summary(lasso_lm_df)
 
 lasso_lm_model <- lm(log(bc_ug_m3) ~ ., data = lasso_lm_df)
