@@ -431,7 +431,7 @@ ggsave(file = here::here("Figs", "Sample_Locations_by_Campaign.jpeg"),
 #' Figure 2: Boxplots of BC concentrations by week
 #' -----------------------------------------------------------------------------
 
-lur_data_sf <- read_csv(here::here("Data", "Final_BC_Data_Set.csv")) %>%
+lur_data_sf <- read_csv(here::here("Data", "Final_Filters_for_ST_Model.csv")) %>%
   filter(!is.na(bc_ug_m3)) %>%
   mutate(lon2 = lon, lat2 = lat) %>%
   st_as_sf(coords = c('lon2', 'lat2'), crs = ll_wgs84) %>%
@@ -447,13 +447,22 @@ camp_names <- c("Campaign 1", "Campaign 2", "Campaign 3",
                 "Campaign 4", "Campaign 5")
 names(camp_names) <- c("Campaign1", "Campaign2", "Campaign3",
                        "Campaign4", "Campaign5")
-box_plot <- ggplot(box_data) +
-  geom_boxplot(aes(x = as.Date(st_week), y = bc_ug_m3, group = st_week, 
-               color = as.factor(campaign))) +
+box_plot <- ggplot() +
+  geom_boxplot(data = filter(box_data, campaign != "Campaign5"),
+               aes(x = as.Date(st_week), y = bc_ug_m3, group = st_week, 
+                   color = as.factor (campaign), fill = as.factor(campaign))) +
+  geom_point(data = filter(box_data, campaign == "Campaign5"),
+               aes(x = as.Date(st_week), y = bc_ug_m3, group = st_week, 
+                   color = as.factor (campaign), fill = as.factor(campaign)),
+             shape = 21, ) +
   scale_color_manual(name = "Campaign",
                      labels = c("Campaign 1", "Campaign 2", "Campaign 3",
                                 "Campaign 4", "Campaign 5"),
-                     values = c(c1_color, c2_color, c3_color, c4_color, c5_color)) +
+                     values = c(c1_color, c2_color, c3_color, c4_color, "black")) +
+  scale_fill_manual(name = "Campaign",
+                     labels = c("Campaign 1", "Campaign 2", "Campaign 3",
+                                "Campaign 4", "Campaign 5"),
+                     values = c(NA, NA, NA, NA, c5_color)) +
   xlab("Sampling week") + ylab("Distributed site BC concentration (\u03BCg/m\u00B3)") +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
   facet_wrap(. ~ campaign, nrow = 1, scales = "free_x", 
@@ -474,6 +483,8 @@ library(numDeriv)
 library(Matrix)
 library(plotrix)
 library(maps)
+
+source(here::here("Code", "functions_model.R"))
 
 load(here::here("Results", "Denver_ST_Model_B.rdata"))
 names(denver.data.B)
@@ -553,28 +564,29 @@ library(Matrix)
 library(plotrix)
 library(maps)
 
-load(here::here("Results", "Denver_ST_Model_B.rdata"))
+source(here::here("Code", "functions_model.R"))
 
+load(here::here("Results", "Denver_ST_Model_B.rdata"))
 print(est.denver.model.B)
 
 #' Get CV predictions for the plot
-pred.B.cv.log <- predictCV(denver.model.B, est.denver.B.cv,# LTA = T,
+pred.B.cv.log <- predictCV(denver.model.B, est.denver.B.cv, LTA = T,
                              transform="unbiased")
 
 names(pred.B.cv.log)
 summary(pred.B.cv.log)
 
 #' #' What does this look like in base R?
-#' par(mfrow=c(1,2), mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
-#' plot(pred.B.cv.log, "obs", ID="all", pch=c(19,NA), cex=.25, lty=c(NA,2),
-#'      col=c("ID", "black", "grey"),
-#'      ylim=c(-1,2),
-#'      xlab="Observations", ylab="Predictions",
-#'      main="Cross-validation BC (log ug/m3)")
-#' with(pred.B.cv.log$pred.LTA, plotCI(obs, EX.pred, uiw=1.96*sqrt(VX.pred),
-#'                                       xlab="Observations", ylab="Predictions",
-#'                                       main="Temporal average BC (ug/m3)"))
-#' abline(0, 1, col="grey")
+# par(mfrow=c(1,2), mar=c(3.3,3.3,1.5,1), mgp=c(2,1,0))
+# plot(pred.B.cv.log, "obs", ID="all", pch=c(19,NA), cex=.25, lty=c(NA,2),
+#      col=c("ID", "black", "grey"),
+#      ylim=c(-1,2),
+#      xlab="Observations", ylab="Predictions",
+#      main="Cross-validation BC (log ug/m3)")
+# with(pred.B.cv.log$pred.LTA, plotCI(obs, EX.pred, uiw=1.96*sqrt(VX.pred),
+#                                       xlab="Observations", ylab="Predictions",
+#                                       main="Temporal average BC (ug/m3)"))
+# abline(0, 1, col="grey")
 
 #' Plotting in ggplot2
 cv_data <- as.data.frame(pred.B.cv.log$pred.obs) %>%
@@ -585,12 +597,7 @@ cv_data <- as.data.frame(pred.B.cv.log$pred.obs) %>%
                                 ifelse(month %in% c(6, 7, 8), 3, 4))))
 head(cv_data)
 
-#lta_data <- as.data.frame(pred.B.cv.log$pred.LTA)
-lta_data <- cv_data %>%
-  group_by(ID) %>%
-  summarize(obs = mean(obs, na.rm = T),
-            EX.pred = mean(EX.pred, na.rm = T),
-            )
+lta_data <- as.data.frame(pred.B.cv.log$pred.LTA)
 
 cv_plot <- ggplot(data = cv_data) +
   coord_equal() +
@@ -598,8 +605,8 @@ cv_plot <- ggplot(data = cv_data) +
   geom_point(aes(x = obs, y = EX.pred)) +
   geom_abline(slope = 1, intercept = 0, linetype = 2, color = "grey50") +
   # scale_color_viridis(name = "Season", discrete = T,
-  #                     labels = c("1" = "Winter", "2" = "Spring",
-  #                                "3" = "Summer", "4" = "Fall")) +
+                      # labels = c("1" = "Winter", "2" = "Spring",
+                      #            "3" = "Summer", "4" = "Fall")) +
   xlab("BC Observations (\u03BCg/m\u00B3)") + ylab("BC Predictions (\u03BCg/m\u00B3)") +
   xlim(c(0.7, 2.5)) + ylim(c(0.7, 2.5)) +
   simple_theme +
@@ -612,10 +619,10 @@ cv_plot
 
 lta_plot <- ggplot(data = lta_data) +
   coord_fixed() +
-  # geom_pointrange(aes(x = obs, y = EX.pred, 
-  #                     ymin = EX.pred - (1.96*sqrt(VX.pred)),
-  #                     ymax = EX.pred + (1.96*sqrt(VX.pred))),
-  #                 color = "grey50") +
+  geom_pointrange(aes(x = obs, y = EX.pred,
+                      ymin = EX.pred - (1.96*sqrt(VX.pred)),
+                      ymax = EX.pred + (1.96*sqrt(VX.pred))),
+                  color = "grey50") +
   geom_point(aes(x = obs, y = EX.pred)) +
   geom_abline(slope = 1, intercept = 0, linetype = 2, color = "grey50") +
   xlab("BC Observations (\u03BCg/m\u00B3)") + ylab("BC Predictions (\u03BCg/m\u00B3)") +
@@ -635,6 +642,8 @@ ggsave(file = here::here("Figs", "Model_CV_Results.jpeg"),
 #' -----------------------------------------------------------------------------
 
 load(here::here("Results", "Grid_LTA_Preds_2018.rdata"))
+
+source(here::here("Code", "functions_model.R"))
 
 #' Long term averages for 2018
 lta_preds <- as.data.frame(E.1$EX) %>% 
@@ -747,6 +756,8 @@ library(numDeriv)
 library(Matrix)
 library(plotrix)
 library(maps)
+
+source(here::here("Code", "functions_model.R"))
 
 load(here::here("Results", "Denver_ST_Model_B.rdata"))
 denver.model.B
@@ -939,6 +950,9 @@ ggsave(file = here::here("Figs", "Locations_Map_For_GA.jpeg"),
 #' Figure S1-S3: Time Series for BC, NO2, and PM2.5 monitoring data
 #' -----------------------------------------------------------------------------
 
+#' Denver Metro area counties
+counties <- c("001", "005", "013", "014", "031", "059")
+
 #' NO2 concentrations
 no2_data <- read_csv(here::here("Data", "Monitor_NO2_Data_AEA.csv")) %>% 
   filter(!is.na(Arithmetic_Mean)) %>% 
@@ -1006,6 +1020,7 @@ pm_data <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv")) %>%
   mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
   filter(County_Code %in% counties) %>% 
   filter(Sample_Duration != "1 HOUR") %>% 
+  filter(!(monitor_id == "080310023" & is.na(Pollutant_Standard))) %>%
   arrange(Date_Local, monitor_id)
 head(pm_data$Date_Local)
 tail(pm_data$Date_Local)
@@ -1013,10 +1028,6 @@ tail(pm_data$Date_Local)
 #' Exclude monitors with really short-term records
 pm_data <- filter(pm_data, monitor_id != '080310013')
 length(unique(pm_data$monitor_id))
-
-#' Add an identifier to differentiate these measurements from collocated pollutants at the same site
-pm_data$monitor_id <- paste0(pm_data$monitor_id, "_pm")
-unique(pm_data$monitor_id)
 
 # Log-transformed PM2.5
 pm_ts2 <- ggplot(data = pm_data, aes(x = Date_Local, y = log(Arithmetic_Mean))) +

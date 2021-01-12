@@ -1,7 +1,7 @@
 ---
 title: "Fitting the ST model for black carbon in Denver, CO"
 author: "Sheena Martenies"
-date: "01/05/2021"
+date: "01/12/2021"
 output:
   html_document:
     df_print: paged
@@ -933,8 +933,8 @@ save(denver.data.A, denver.model.A, est.denver.model.A, est.denver.A.cv,
 Making predictions using the CV model. Printing out the CV summary statistics as well
 
 ```{r}
-pred.A.cv <- predictCV(denver.model.A, est.denver.A.cv)#, LTA = T)
-pred.A.cv.log <- predictCV(denver.model.A, est.denver.A.cv, #LTA = T,
+pred.A.cv <- predictCV(denver.model.A, est.denver.A.cv, LTA = T)
+pred.A.cv.log <- predictCV(denver.model.A, est.denver.A.cv, LTA = T,
                            transform="unbiased")
 
 head(pred.A.cv$pred.all$EX)
@@ -1126,8 +1126,8 @@ save(denver.data.B, denver.model.B, est.denver.model.B, est.denver.B.cv,
 Making predictions using the CV model. Printing out the CV summary statistics as well
 
 ```{r}
-pred.B.cv <- predictCV(denver.model.B, est.denver.B.cv)#, LTA = T)
-pred.B.cv.log <- predictCV(denver.model.B, est.denver.B.cv, #LTA = T,
+pred.B.cv <- predictCV(denver.model.B, est.denver.B.cv, LTA = T)
+pred.B.cv.log <- predictCV(denver.model.B, est.denver.B.cv, LTA = T,
                            transform="unbiased")
 
 
