@@ -335,3 +335,79 @@ monitor_data <- monitor_data %>%
 st_write(monitor_data, here::here("Data", "Monitor_BC_Data_AEA.csv"),
          layer_options = "GEOMETRY=AS_WKT", delete_dsn = T)
 
+#' -----------------------------------------------------------------------------
+#' Ozone data (just in case)
+#' Start with 8h
+#' -----------------------------------------------------------------------------
+
+pol <- 44201
+file_list <- list.files(aqs_path, pattern = "8hour_44201")
+
+aqs_data <- data.frame()
+
+for (i in 1:length(file_list)) {
+  temp <- read_csv(paste0(aqs_path, "/", file_list[i]))
+  colnames(temp) <- gsub(" ", "_", colnames(temp))
+  
+  temp <- filter(temp, State_Code == "08") 
+  
+  #' if a year doesn't have data, skip it
+  if(nrow(temp) == 0) next
+  
+  temp <- temp %>% 
+    filter(Parameter_Code == pol) %>% 
+    mutate(County_Code = str_pad(County_Code, width = 3, side = "left", pad = "0"),
+           Site_Num = str_pad(Site_Num, width = 4, side = "left", pad = "0")) %>% 
+    mutate(monitor_id = paste0(State_Code, County_Code, Site_Num)) %>% 
+    rename(Arithmetic_Mean = "Mean_Including_All_Data",
+           Arithmetic_Mean_No_Flagged = "Mean_Excluding_All_Flagged_Data")
+  
+  aqs_data <- bind_rows(aqs_data, temp)
+  rm(temp)
+}
+
+aqs_data <- aqs_data %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = ll_wgs84) %>%
+  st_transform(crs = albers)
+
+st_write(aqs_data, here::here("Data", "Monitor_8hO3_Data_AEA.csv"),
+         layer_options = "GEOMETRY=AS_WKT", delete_dsn = T)
+
+#' -----------------------------------------------------------------------------
+#' Ozone data (just in case)
+#' Now 24h ozone
+#' -----------------------------------------------------------------------------
+
+pol <- 44201
+file_list <- list.files(aqs_path, pattern = "daily_44201")
+
+aqs_data <- data.frame()
+
+for (i in 1:length(file_list)) {
+  temp <- read_csv(paste0(aqs_path, "/", file_list[i]))
+  colnames(temp) <- gsub(" ", "_", colnames(temp))
+  
+  temp <- filter(temp, State_Code == "08") 
+  
+  #' if a year doesn't have data, skip it
+  if(nrow(temp) == 0) next
+  
+  temp <- temp %>% 
+    filter(Parameter_Code == pol) %>% 
+    mutate(County_Code = str_pad(County_Code, width = 3, side = "left", pad = "0"),
+           Site_Num = str_pad(Site_Num, width = 4, side = "left", pad = "0")) %>% 
+    mutate(monitor_id = paste0(State_Code, County_Code, Site_Num)) %>% 
+    rename(Max_Value = "1st_Max_Value")
+  
+  aqs_data <- bind_rows(aqs_data, temp)
+  rm(temp)
+}
+
+aqs_data <- aqs_data %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = ll_wgs84) %>%
+  st_transform(crs = albers)
+
+st_write(aqs_data, here::here("Data", "Monitor_24hO3_Data_AEA.csv"),
+         layer_options = "GEOMETRY=AS_WKT", delete_dsn = T)
+
+
