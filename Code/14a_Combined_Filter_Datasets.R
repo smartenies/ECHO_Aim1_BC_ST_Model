@@ -88,7 +88,7 @@ sp_covariates <- read_csv(here::here("Data", sp_covariates_file_name)) %>%
   distinct()
 
 #' Spatiotemporal covariates
-st_covariates_file_name <- "ST_Covariates_Sites_AEA.csv"
+st_covariates_file_name <- "ST_Covariates_Sites_Updated_AEA.csv"
 st_covariates <- read_csv(here::here("Data", st_covariates_file_name)) %>%
   rename(st_week = week)
 
@@ -130,8 +130,23 @@ test4 <- filter(all_data, filter_id != "080310027") %>%
 
 #' Write out data
 #' Two .csv files: with and without date  
-data_name <- "Combined_Filter_Data_AEA.csv"
+data_name <- "Combined_Filter_Data_Updated_AEA.csv"
 archive_data_name <- paste0("Combined_Filter_Data_AEA_", today, ".csv")
 
 write_csv(all_data, here::here("Data", data_name))
 write_csv(all_data, here::here("Data/Archived_Data", archive_data_name))
+
+#' Check updated smoke and NO2 variables
+all_data_orig <- read_csv(here::here("Data", "Combined_Filter_Data_AEA.csv"),
+                               guess_max = 100000)
+all_data_update <- read_csv(here::here("Data", "Combined_Filter_Data_Updated_AEA.csv"),
+                                 guess_max = 100000)
+
+summary(all_data_orig$bc_ug_m3_dem)
+summary(all_data_update$bc_ug_m3_dem)
+
+summary(all_data_orig$idw_no2)
+summary(all_data_update$idw_no2)
+
+table(all_data_orig$area_smoke_2sd)
+table(all_data_update$area_smoke_2sd)

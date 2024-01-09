@@ -59,7 +59,7 @@ ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
 #' Define which variable we want to use-- BC calibrated using Deming regression
 #'------------------------------------------------------------------------------
 
-data_name <- "Combined_Filter_Data_AEA.csv"
+data_name <- "Combined_Filter_Data_Updated_AEA.csv"
 all_data <- read_csv(here::here("Data", data_name))
 names(all_data)
 glimpse(all_data)
@@ -472,7 +472,7 @@ spplot(all_idw["var1.pred"]) +
 #' E) Creating final data sets
 #'------------------------------------------------------------------------------
 
-data_name <- "Combined_Filter_Data_AEA.csv"
+data_name <- "Combined_Filter_Data_Updated_AEA.csv"
 all_data <- read_csv(here::here("Data", data_name))
 
 #' Select a "calibrated" version of the data
@@ -514,7 +514,7 @@ dist_data2 <- filter(dist_data, st_week == sample_week) %>%
   filter(!is.na(bc_ug_m3))
 glimpse(dist_data2)
 
-write_csv(dist_data2, here::here("Data", "Final_Filters_for_ST_Model.csv"))
+write_csv(dist_data2, here::here("Data", "Final_Filters_for_ST_Model_Updated.csv"))
 
 #' All of the dropped data should be in Campaign 4
 dropped_data <- filter(filter_data, campaign == "Campaign4" & site_id %in% cv_drop$site_id)
@@ -524,7 +524,7 @@ quantile(dropped_data$bc_ug_m3, probs = c(0.05, 0.95))
 sd(dropped_data$bc_ug_m3)
 sd(dropped_data$bc_ug_m3) / mean(dropped_data$bc_ug_m3)
 
-write_csv(dropped_data, here::here("Data", "Dropped_Filters_for_ST_Model.csv"))
+write_csv(dropped_data, here::here("Data", "Dropped_Filters_for_ST_Model_Updated.csv"))
 
 #' central site data
 central_data <- filter(all_data, filter_id == "080310027") %>%
@@ -549,4 +549,4 @@ lur_data <- bind_rows(dist_data, central_data) %>%
 head(lur_data$st_week)
 tail(lur_data$st_week)
 
-write_csv(lur_data, here::here("Data", "Final_BC_Data_Set_for_ST_Model.csv"))
+write_csv(lur_data, here::here("Data", "Final_BC_Data_Set_for_ST_Model_Updated.csv"))

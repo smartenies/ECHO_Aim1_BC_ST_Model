@@ -428,6 +428,63 @@ ggsave(file = here::here("Figs", "Sample_Locations_by_Campaign.jpeg"),
        device = "jpeg", units = "in", height = 9, width = 11, dpi = 500)
 
 #' -----------------------------------------------------------------------------
+#' Figure 1a: Map of residential sampling locations (residences jittered)
+#' -----------------------------------------------------------------------------
+
+#' Denver Metro area counties
+counties <- c("001", "005", "013", "014", "031", "059")
+
+lur_data_sf <- read_csv(here::here("Data", "Final_BC_Data_Set.csv"),
+                        guess_max = 10000) %>%
+  filter(!is.na(bc_ug_m3)) %>%
+  mutate(lon2 = lon, lat2 = lat) %>%
+  st_as_sf(coords = c('lon2', 'lat2'), crs = ll_wgs84) %>%
+  filter(participant == 1) %>%
+  select(site_id) %>%
+  distinct()
+
+glimpse(lur_data_sf)
+
+#' Map in ggmap
+base_map <- get_map(location = "Commerce City, CO", zoom = 10)
+ggmap(base_map)
+attr(base_map, "bb")
+
+ggmap(base_map) +
+#ggplot() +
+  geom_sf(data = st_jitter(lur_data_sf, 0.02), 
+  #geom_sf(data = lur_data_sf, 
+          aes(fill = "res", color = "res"), inherit.aes = F, show.legend = "point") +
+  # geom_sf(data = filter(filter_data, participant == 0),
+  #         aes(fill = "com", color = "com"), inherit.aes = F, show.legend = "point") +
+  #geom_sf(data = highways, color = "grey50") +
+  scale_color_manual(name = "Sampling\nLocations",
+                     values = c("res" = "blue"),
+                     labels = c("res" = "Participant")) +
+  scale_fill_manual(name = "Sampling\nLocations",
+                    values = c("res" = "blue"),
+                    labels = c("res" = "Participant")) +
+annotation_scale(data = lur_data_sf, #plot_unit = "m",
+                 location = "br", width_hint = 0.5,
+                 pad_x = unit(0.75, "cm"), pad_y = unit(0.5, "cm"),
+                 #text_cex = 1.5,
+                 line_col = "black", text_col = "black", text_face = "bold") +
+annotation_north_arrow(data = lur_data_sf,
+                       location = "br", which_north = "grid",
+                       pad_x = unit(0.5, "cm"), pad_y = unit(0.75, "cm"),
+                       style = north_arrow_minimal(line_col = "black",
+                                                   fill = "black",
+                                                   line_width = 0.5,
+                                                   text_col = "black",
+                                                   text_face = "bold",
+                                                   text_size = 10)) +
+  xlab("") + ylab("") +
+  theme(legend.position = c(0.15, 0.85)) +
+  map_theme
+ggsave(filename = here::here("Figs", "jittered_participant_locations.jpeg"),
+       height = 7, width = 7, units = "in", device = "jpeg", dpi = 500)
+
+#' -----------------------------------------------------------------------------
 #' Figure 2: Boxplots of BC concentrations by week
 #' -----------------------------------------------------------------------------
 

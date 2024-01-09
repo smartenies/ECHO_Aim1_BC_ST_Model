@@ -14,6 +14,10 @@
 #' to at least 2009. This updated version of the script attempts to achieve that.
 #' This script averages the ST covariates for the week in which samples were 
 #' collected using the first day of the week as the "indicator" date
+#' 
+#' Update 05.10.21: I am updating the datasets to reflect the corrected smoke
+#' data set that includes observations for a period when the CDPHE data
+#' were not available
 #' =============================================================================
 
 library(sf)
@@ -40,7 +44,8 @@ ll_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
 counties <- c("001", "005", "013", "014", "031", "059")
 
 #' PM2.5 concentrations
-pm_data <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv")) %>% 
+pm_data <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv"),
+                    guess_max = 100000) %>% 
   filter(!is.na(Arithmetic_Mean)) %>% 
   st_as_sf(wkt = "WKT", crs = albers) %>% 
   mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
@@ -49,7 +54,8 @@ pm_data <- read_csv(here::here("Data", "Monitor_PM_Data_AEA.csv")) %>%
   arrange(Date_Local, monitor_id)
 
 #' Black carbon
-bc_data <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv")) %>% 
+bc_data <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv"),
+                    guess_max = 100000) %>% 
   filter(!is.na(Arithmetic_Mean)) %>% 
   st_as_sf(wkt = "WKT", crs = albers) %>% 
   mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
@@ -57,7 +63,8 @@ bc_data <- read_csv(here::here("Data", "Monitor_BC_Data_AEA.csv")) %>%
   arrange(Date_Local, monitor_id)
 
 #' Temperature
-temp_data <- read_csv(here::here("Data", "Monitor_TEMP_Data_AEA.csv")) %>% 
+temp_data <- read_csv(here::here("Data", "Monitor_TEMP_Data_AEA.csv"),
+                      guess_max = 200000) %>% 
   filter(!is.na(Arithmetic_Mean)) %>% 
   st_as_sf(wkt = "WKT", crs = albers)%>% 
   mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
@@ -65,7 +72,8 @@ temp_data <- read_csv(here::here("Data", "Monitor_TEMP_Data_AEA.csv")) %>%
   arrange(Date_Local, monitor_id)
 
 #' NO2
-no2_data <- read_csv(here::here("Data", "Monitor_NO2_Data_AEA.csv")) %>% 
+no2_data <- read_csv(here::here("Data", "Monitor_NO2_Data_AEA.csv"),
+                     guess_max = 100000) %>% 
   filter(!is.na(Arithmetic_Mean)) %>% 
   st_as_sf(wkt = "WKT", crs = albers) %>% 
   mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
@@ -73,13 +81,16 @@ no2_data <- read_csv(here::here("Data", "Monitor_NO2_Data_AEA.csv")) %>%
   arrange(Date_Local, monitor_id)
 
 #' Smoke days
-smoke_data <- read_csv(here::here("Data", "Monitor_Smoke_Days_AEA.csv")) %>%
+#smoke_data <- read_csv(here::here("Data", "Monitor_Smoke_Days_AEA.csv")) %>%
+smoke_data <- read_csv(here::here("Data", "Monitor_Smoke_Days_Updated_AEA.csv"),
+                      guess_max = 100000) %>%
   filter(!is.na(smoke_day_1sd)) %>% 
   filter(!is.na(monitor_id)) %>%
   st_as_sf(wkt = "WKT", crs = albers) %>%
   mutate(County_Code = str_sub(monitor_id, start = 3, end = 5)) %>%
   filter(County_Code %in% counties) %>% 
   arrange(Date_Local, monitor_id)
+table(smoke_data$smoke_day_2sd)
 
 #' -----------------------------------------------------------------------------
 #' Spatiotemporal covariates for each unique sampling location
@@ -111,7 +122,7 @@ print(sum(duplicated(locations_sf$filter_id)))
 
 #' Unique locations
 unique_locations <- select(locations_sf, site_id) %>%
-  distinct(site_id)
+  distinct()
 
 #' -----------------------------------------------------------------------------
 #' For each filter, summarize the following:
@@ -292,8 +303,9 @@ options(warn=0)
 options(dplyr.summarise.inform = T)
 
 glimpse(cov_temp)
+summary(cov_temp)
 
-covariates_file_name1 <- paste0("ST_Covariates_Sites_AEA.csv")
+covariates_file_name1 <- paste0("ST_Covariates_Sites_Updated_AEA.csv")
 st_write(cov_temp, dsn = here::here("Data", covariates_file_name1),
          delete_dsn = T, layer_options = "GEOMETRY=AS_WKT")
 
@@ -303,7 +315,18 @@ locations_cov <- left_join(cov_temp, locations_sf, by = "site_id") %>%
   mutate(filter_id = ifelse(str_detect(filter_id, "080310027"), "080310027",
                             filter_id))
 
-covariates_file_name2 <- paste0("ST_Covariates_Filters_AEA.csv")
+covariates_file_name2 <- paste0("ST_Covariates_Filters_Updated_AEA.csv")
 st_write(locations_cov, dsn = here::here("Data", covariates_file_name2),
          delete_dsn = T, layer_options = "GEOMETRY=AS_WKT")
 
+#' Check updated smoke and NO2 variables
+locations_cov_orig <- read_csv(here::here(here::here("Data", "ST_Covariates_Filters_AEA.csv")),
+                               guess_max = 100000)
+locations_cov_update <- read_csv(here::here(here::here("Data", "ST_Covariates_Filters_Updated_AEA.csv")),
+                                 guess_max = 100000)
+
+summary(locations_cov_orig$idw_no2)
+summary(locations_cov_update$idw_no2)
+
+table(locations_cov_orig$area_smoke_2sd)
+table(locations_cov_update$area_smoke_2sd)

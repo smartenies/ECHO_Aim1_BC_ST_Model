@@ -5,7 +5,16 @@
 #' Author: Sheena Martenies
 #' Contact: smarte4@illinois.edu
 #' 
-#' Description:
+#' Description: Fits the BC model
+#' 
+#' Updated Sep 5, 2023:
+#' - Tried to update the model to predict concentrations at new HS addresses
+#' - Issue when using estimate.STmodel() from J. Keller's script
+#' - Trying to run the code using R version 3.6.3 (what was available at the
+#'   time the model was original fit in 2021)
+#'   
+#'   NOTE: The code below only works when using R Version 3.6.3
+#'   Use RSwitch to make sure you are using the correct version
 #' =============================================================================
 
 # library(devtools)
@@ -18,38 +27,11 @@ library(plotrix)
 library(maps)
 
 library(sf)
-library(gstat)
-library(sp)
-library(raster)
-library(ggplot2)
-library(ggthemes)
-library(extrafont)
 library(stringr)
 library(tidyverse)
 library(lubridate)
 library(readxl)
 library(viridis)
-
-#' For ggplots
-# loadfonts(device = "win")
-
-simple_theme <- theme(
-  #aspect.ratio = 1,
-  text  = element_text(size = 12, color = 'black'),
-  panel.spacing.y = unit(0,"cm"),
-  panel.spacing.x = unit(0.25, "lines"),
-  panel.grid.minor = element_line(color = "grey90"),
-  panel.grid.major = element_line(color = "grey90"),
-  panel.border=element_rect(fill = NA),
-  panel.background=element_blank(),
-  axis.ticks = element_line(colour = "black"),
-  axis.text = element_text(color = "black", size=10),
-  # legend.position = c(0.1,0.1),
-  plot.margin=grid::unit(c(0,0,0,0), "mm"),
-  legend.key = element_blank()
-)
-
-options(scipen = 9999) #avoid scientific notation
 
 albers <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
 ll_nad83 <- "+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0"
@@ -209,8 +191,7 @@ no2_ts <- ggplot(data = no2_data, aes(x = Date_Local, y = Arithmetic_Mean)) +
   scale_color_viridis(name = "Monitor ID", discrete = T) +
   scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
   facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-  simple_theme
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 no2_ts
 
 # Log-transformed NO2
@@ -220,8 +201,7 @@ no2_ts2 <- ggplot(data = no2_data, aes(x = Date_Local, y = log(Arithmetic_Mean))
   scale_color_viridis(name = "Monitor ID", discrete = T) +
   scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
   facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-  simple_theme
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 no2_ts2
 
 # Log-transformed NO2 with a higher value for k in the smoothed term
@@ -231,8 +211,7 @@ no2_ts3 <- ggplot(data = no2_data, aes(x = Date_Local, y = log(Arithmetic_Mean))
   scale_color_viridis(name = "Monitor ID", discrete = T) +
   scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
   facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-  simple_theme
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 no2_ts3
 
 #' Organize the observations and spatial data. Use the log-transformed NO2 here
@@ -297,8 +276,7 @@ bc_ts <- ggplot(data = bc_cent_data, aes(x = Date_Local, y = Arithmetic_Mean)) +
   scale_color_viridis(name = "Monitor ID", discrete = T) +
   scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
   #facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-  simple_theme
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 bc_ts
 
 # Log-transformed BC
@@ -308,8 +286,7 @@ bc_ts2 <- ggplot(data = bc_cent_data, aes(x = Date_Local, y = log(Arithmetic_Mea
   scale_color_viridis(name = "Monitor ID", discrete = T) +
   scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
   #facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-  simple_theme
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
 bc_ts2
 
 #' Organize the observations and spatial data. Use log-transformed data here
@@ -381,8 +358,7 @@ pm_ts <- ggplot(data = pm_data, aes(x = Date_Local, y = Arithmetic_Mean)) +
   scale_color_viridis(name = "Monitor ID", discrete = T) +
   scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
   facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-  simple_theme
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 pm_ts
 
 # Log-transformed PM2.5
@@ -392,8 +368,7 @@ pm_ts2 <- ggplot(data = pm_data, aes(x = Date_Local, y = log(Arithmetic_Mean))) 
   scale_color_viridis(name = "Monitor ID", discrete = T) +
   scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
   facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-  simple_theme
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
 pm_ts2
 
 # Log-transformed PM2.5  with a higher value for k in the smoothed term
@@ -403,8 +378,7 @@ pm_ts3 <- ggplot(data = pm_data, aes(x = Date_Local, y = log(Arithmetic_Mean))) 
   scale_color_viridis(name = "Monitor ID", discrete = T) +
   scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
   facet_wrap(. ~ monitor_id, scales = "fixed", ncol = 2) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-  simple_theme
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
 pm_ts3
 
 #' Organize the observations and spatial data. Use the log-transformed data here
@@ -1011,7 +985,6 @@ print(est.denver.model.B)
 
 #' Cross-validation
 #' Define the CV groups
-
 set.seed(1000)
 
 site_idsB <- colnames(denver.model.B$D.beta)[which(str_detect(colnames(denver.model.B$D.beta), "d_") == T)]
